@@ -24,7 +24,6 @@ const pluginConfigPath = path.join(lotusPluginRoot, 'config', 'config.yaml');
 const dataDir = path.join(lotusPluginRoot, 'data');
 const logFilePath = path.join(dataDir, 'lastRun.log');
 
-
 export class lotusCheckin extends plugin {
     constructor() {
         super({
@@ -44,45 +43,60 @@ export class lotusCheckin extends plugin {
         if (global.lotusPluginLoaded) return;
         
         this.task = null;
-
+        
+        this.checkAndCreateConfig();
         this.runStartupSequence();
 
         global.lotusPluginLoaded = true;
     }
 
+    checkAndCreateConfig() {
+        const exampleConfigPath = path.join(lotusPluginRoot, 'config', 'config.yaml.example');
+        if (!fs.existsSync(pluginConfigPath) && fs.existsSync(exampleConfigPath)) {
+            logger.warn('[荷花插件] 检测到 config.yaml 不存在，将从模板创建...');
+            const templateContent = fs.readFileSync(exampleConfigPath, 'utf8');
+            fs.writeFileSync(pluginConfigPath, templateContent, 'utf8');
+        }
+    }
+
     runStartupSequence() {
         const logBlock = ['--- 荷花插件 Lotus-Plugin ---'];
         
-        const pluginConfig = YAML.parse(fs.readFileSync(pluginConfigPath, 'utf8'));
-        this.setupScheduler(pluginConfig);
-        logBlock.push(`[任务] 定时签到已安排, 执行时间: ${pluginConfig.schedule}`);
+        try {
+            const pluginConfig = YAML.parse(fs.readFileSync(pluginConfigPath, 'utf8'));
+            this.setupScheduler(pluginConfig);
+            logBlock.push(`[任务] 定时签到已安排, 执行时间: ${pluginConfig.schedule}`);
 
-        if (pluginConfig.autoCatchUp !== true) {
-            logBlock.push('[补签] 功能已禁用 (可在config.yaml中开启)');
-        } else {
-            const today = new Date().toLocaleDateString('sv-SE');
-            const lastRunDate = fs.existsSync(logFilePath) ? fs.readFileSync(logFilePath, 'utf8').trim() : null;
-
-            if (lastRunDate === today) {
-                logBlock.push('[补签] 今日任务已执行，无需补签。');
+            if (pluginConfig.autoCatchUp !== true) {
+                logBlock.push('[补签] 功能已禁用 (可在config.yaml中开启)');
             } else {
-                const scheduleParts = pluginConfig.schedule.split(' ');
-                const scheduledHour = parseInt(scheduleParts[1], 10);
-                const scheduledMinute = parseInt(scheduleParts[0], 10);
-                
-                const now = new Date();
-                const scheduledTimeToday = new Date();
-                scheduledTimeToday.setHours(scheduledHour, scheduledMinute, 0, 0);
+                const today = new Date().toLocaleDateString('sv-SE');
+                const lastRunDate = fs.existsSync(logFilePath) ? fs.readFileSync(logFilePath, 'utf8').trim() : null;
 
-                if (now > scheduledTimeToday) {
-                    logBlock.push('[补签] 检测到错过任务，将在1分钟后执行。');
-                    setTimeout(() => {
-                        this.executeCheckinScript('补签任务');
-                    }, 60 * 1000);
+                if (lastRunDate === today) {
+                    logBlock.push('[补签] 今日任务已执行，无需补签。');
                 } else {
-                    logBlock.push('[补签] 今日任务尚未到执行时间。');
+                    const scheduleParts = pluginConfig.schedule.split(' ');
+                    const scheduledHour = parseInt(scheduleParts[1], 10);
+                    const scheduledMinute = parseInt(scheduleParts[0], 10);
+                    
+                    const now = new Date();
+                    const scheduledTimeToday = new Date();
+                    scheduledTimeToday.setHours(scheduledHour, scheduledMinute, 0, 0);
+
+                    if (now > scheduledTimeToday) {
+                        logBlock.push('[补签] 检测到错过任务，将在1分钟后执行。');
+                        setTimeout(() => {
+                            this.executeCheckinScript('补签任务');
+                        }, 60 * 1000);
+                    } else {
+                        logBlock.push('[补签] 今日任务尚未到执行时间。');
+                    }
                 }
             }
+        } catch (error) {
+            logBlock.push(`[错误] 插件启动失败: ${error.message}`);
+            logBlock.push('[提示] 如果是首次使用，请检查 config/config.yaml.example 是否存在。');
         }
         
         logBlock.push('-----------------------------');

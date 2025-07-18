@@ -1,0 +1,8 @@
+# 忽略用户的本地配置文件
+config/config.yaml
+
+# 忽略所有用户数据和日志
+data/
+
+# 忽略MihoyoBBSTools中所有由用户生成的配置文件
+MihoyoBBSTools/config/*.yaml
