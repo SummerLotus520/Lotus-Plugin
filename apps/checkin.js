@@ -9,7 +9,7 @@ import cfg from '../../../lib/config/config.js';
 // 动态导入 xiaoyao-cvs-plugin 的函数
 let getRefreshedCookieAndStoken;
 try {
-    const userModule = await import('../xiaoyao-cvs-plugin/apps/user.js');
+    const userModule = await import('../../xiaoyao-cvs-plugin/apps/user.js');
     getRefreshedCookieAndStoken = userModule.getRefreshedCookieAndStoken;
 } catch (error) {
     logger.error('Lotus-Plugin无法加载依赖函数[getRefreshedCookieAndStoken]，请确保xiaoyao-cvs-plugin存在且已正确修改！');
