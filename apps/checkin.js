@@ -161,7 +161,7 @@ export class lotusCheckin extends plugin {
         const data = await getRefreshedCookieAndStoken(e.user_id);
         
         if (!data) {
-            return e.reply("获取Cookie和Stoken失败！\n请先在[逍遥CVS插件]中绑定有效的stoken，例如发送 stoken=... 指令。");
+            return e.reply("获取Cookie和Stoken失败！\n请先 #扫码登录 来绑定。");
         }
 
         try {
