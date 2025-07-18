@@ -4,7 +4,7 @@ import path from 'node:path';
 import YAML from 'yaml';
 import { exec } from 'child_process';
 import schedule from 'node-schedule';
-import cfg from '../../../../../lib/config/config.js';
+import cfg from '../../../lib/config/config.js';
 
 // 动态导入 xiaoyao-cvs-plugin 的函数
 let getRefreshedCookieAndStoken;
