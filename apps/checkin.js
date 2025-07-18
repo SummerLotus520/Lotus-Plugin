@@ -43,6 +43,8 @@ export class lotusCheckin extends plugin {
 
         if (global.lotusPluginLoaded) return;
         
+        this.task = null;
+
         this.runStartupSequence();
 
         global.lotusPluginLoaded = true;
@@ -74,7 +76,6 @@ export class lotusCheckin extends plugin {
 
                 if (now > scheduledTimeToday) {
                     logBlock.push('[补签] 检测到错过任务，将在1分钟后执行。');
-
                     setTimeout(() => {
                         this.executeCheckinScript('补签任务');
                     }, 60 * 1000);
@@ -85,11 +86,8 @@ export class lotusCheckin extends plugin {
         }
         
         logBlock.push('-----------------------------');
-        
-
         logger.info(`\n${logBlock.join('\n')}`);
     }
-
 
     setupScheduler(pluginConfig) {
         if (this.task) {
@@ -100,7 +98,6 @@ export class lotusCheckin extends plugin {
             this.executeCheckinScript('定时任务');
         });
     }
-
 
     async help(e) {
         await e.reply("【自动签到帮助】\n#注册自动签到 : 使用你的stoken和ck创建签到配置。\n#刷新自动签到 : 当ck或stoken失效时，刷新配置。\n\n---主人指令---\n#初始化签到环境 : 安装python依赖。\n#测试签到 : 手动执行一次签到任务。");
@@ -150,7 +147,7 @@ export class lotusCheckin extends plugin {
         const data = await getRefreshedCookieAndStoken(e.user_id);
         
         if (!data) {
-            return e.reply("获取Cookie和Stoken失败！\n请先扫码登录。");
+            return e.reply("获取Cookie和Stoken失败！\n请先在[逍遥CVS插件]中绑定有效的stoken，例如发送 stoken=... 指令。");
         }
 
         try {
