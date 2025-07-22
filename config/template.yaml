@@ -14,7 +14,7 @@ device:
   fp: ""
 mihoyobbs:
   enable: true
-  checkin: true
+  checkin: false
   checkin_list:
     - 1
     - 2

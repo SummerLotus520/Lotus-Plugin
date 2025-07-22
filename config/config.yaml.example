@@ -8,3 +8,11 @@ schedule: "5 0 * * *"
 # true: 开启 (默认)
 # false: 关闭
 autoCatchUp: true
+
+# 自动刷新配置
+autoRefresh:
+  # 是否启用自动批量刷新, true为开启, false为关闭
+  enabled: false
+  # 自动刷新执行时间 (cron表达式, 格式: 秒 分 时 日 月 周)
+  # 推荐设置为每周或每几天执行一次，例如每周日凌晨5点: '0 0 5 * * 0'
+  schedule: '0 4 * * *'
