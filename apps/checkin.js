@@ -5,6 +5,7 @@ import YAML from 'yaml';
 import { spawn } from 'child_process';
 import schedule from 'node-schedule';
 import cfg from '../../../lib/config/config.js';
+import iconv from 'iconv-lite';
 
 let getRefreshedCookieAndStoken;
 try {
@@ -351,7 +352,9 @@ export class lotusCheckin extends plugin {
         py.on('close', (code) => {
             let stdout = '';
             if (fs.existsSync(tempLogfile)) {
-                stdout = fs.readFileSync(tempLogfile, 'utf8');
+                const buffer = fs.readFileSync(tempLogfile);
+                const encoding = process.platform === 'win32' ? 'gbk' : 'utf8';
+                stdout = iconv.decode(buffer, encoding);
                 fs.unlinkSync(tempLogfile);
             }
 
