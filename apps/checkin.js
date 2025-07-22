@@ -337,29 +337,26 @@ export class lotusCheckin extends plugin {
             return;
         }
         
-        const pyArgs = ['-X', 'utf8', '-u', 'main_multi.py', 'autorun'];
-        const py = spawn('python', pyArgs, { cwd: bbsToolsPath });
+        const tempLogfile = path.join(bbsToolsPath, `temp_run_${Date.now()}.log`);
+        const command = `python -u main_multi.py autorun > "${tempLogfile}" 2>&1`;
 
-        let stdout = '';
-        let stderr = '';
-
-        py.stdout.on('data', (data) => {
-            stdout += data.toString();
-        });
-
-        py.stderr.on('data', (data) => {
-            stderr += data.toString();
-        });
+        const py = spawn(command, { cwd: bbsToolsPath, shell: true });
         
         py.on('error', (err) => {
             logger.error(`[荷花插件] 签到进程启动失败: ${err.message}`);
             const pushTargets = (e && e.user_id) ? [e.user_id] : (cfg.masterQQ || []);
-            pushTargets.forEach(targetId => Bot.pickFriend(targetId).sendMsg(`[荷花插件] 签到进程启动失败，请检查 "python" 命令是否在系统路径中。`).catch(() => {}));
+            pushTargets.forEach(targetId => Bot.pickFriend(targetId).sendMsg(`[荷花插件] 签到进程启动失败，请检查 "python" 命令是否可用。`).catch(() => {}));
         });
 
         py.on('close', (code) => {
+            let stdout = '';
+            if (fs.existsSync(tempLogfile)) {
+                stdout = fs.readFileSync(tempLogfile, 'utf8');
+                fs.unlinkSync(tempLogfile);
+            }
+
             const logPrefix = `[荷花插件][${triggerSource}]`;
-            const fullLog = (code !== 0) ? `${logPrefix}\n${stdout}\n${stderr}\nProcess exited with code: ${code}` : `${logPrefix}\n${stdout}`;
+            const fullLog = (code !== 0) ? `${logPrefix}\n${stdout}\nProcess exited with code: ${code}` : `${logPrefix}\n${stdout}`;
 
             const logFileName = `${new Date().toISOString().replace(/[:.]/g, '-')}.log`;
             const logFilePath = path.join(logArchiveDir, logFileName);
