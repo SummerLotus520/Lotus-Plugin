@@ -2,7 +2,7 @@ import plugin from '../../../lib/plugins/plugin.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
-import { exec } from 'child_process';
+import { spawn } from 'child_process';
 import schedule from 'node-schedule';
 import cfg from '../../../lib/config/config.js';
 
@@ -146,15 +146,21 @@ export class lotusCheckin extends plugin {
             return e.reply("错误：未找到 MihoyoBBSTools 文件夹，请确保它已放置在Lotus-Plugin插件目录下。");
         }
 
-        exec('pip install -r requirements.txt', { cwd: bbsToolsPath }, (error, stdout, stderr) => {
-            if (error) {
-                logger.error(`[荷花插件] 初始化失败: ${error.message}`);
-                logger.error(`[荷花插件] Stderr: ${stderr}`);
-                return e.reply(`初始化失败，请查看控制台错误日志。\n错误信息: ${error.message}`);
+        const py = spawn('pip', ['install', '-r', 'requirements.txt'], { cwd: bbsToolsPath });
+
+        py.stdout.on('data', (data) => logger.info(`[荷花插件][pip]: ${data}`));
+        py.stderr.on('data', (data) => logger.error(`[荷花插件][pip]: ${data}`));
+
+        py.on('close', (code) => {
+            if (code === 0) {
+                e.reply("依赖库安装成功！");
+                logger.info('[荷花插件] 初始化成功。');
+            } else {
+                e.reply(`初始化失败，请查看控制台错误日志。`);
+                logger.error(`[荷花插件] 初始化失败，pip进程退出，代码: ${code}`);
             }
-            logger.info(`[荷花插件] 初始化成功: ${stdout}`);
-            e.reply("依赖库安装成功！");
         });
+        
         return true;
     }
 
@@ -282,7 +288,7 @@ export class lotusCheckin extends plugin {
     }
 
     async runCheckin(e) {
-        await e.reply("开始手动执行签到任务，完成后结果将私聊发送给您。");
+        await e.reply("开始手动执行签到任务，完成后结果将私聊发送给您。由于用户量大，任务可能需要很长时间，请耐心等待。");
         this.executeCheckinScript(`主人[${e.user_id}]手动触发`, e);
     }
     
@@ -325,10 +331,23 @@ export class lotusCheckin extends plugin {
             }
             return;
         }
+        
+        const py = spawn('python', ['-X', 'utf8', 'main_multi.py', 'autorun'], { cwd: bbsToolsPath });
 
-        exec(`python -X utf8 main_multi.py autorun`, { cwd: bbsToolsPath, timeout: 300000 }, (error, stdout, stderr) => {
+        let stdout = '';
+        let stderr = '';
+
+        py.stdout.on('data', (data) => {
+            stdout += data.toString();
+        });
+
+        py.stderr.on('data', (data) => {
+            stderr += data.toString();
+        });
+
+        py.on('close', (code) => {
             const logPrefix = `[荷花插件][${triggerSource}]`;
-            const fullLog = error ? `${logPrefix}\n${stdout}\n${stderr}\nError: ${error.message}` : `${logPrefix}\n${stdout}`;
+            const fullLog = (code !== 0) ? `${logPrefix}\n${stdout}\n${stderr}\nProcess exited with code: ${code}` : `${logPrefix}\n${stdout}`;
 
             const logFileName = `${new Date().toISOString().replace(/[:.]/g, '-')}.log`;
             const logFilePath = path.join(logArchiveDir, logFileName);
@@ -340,8 +359,8 @@ export class lotusCheckin extends plugin {
             } else {
                 pushTargets = cfg.masterQQ || [];
             }
-
-            if (error) {
+            
+            if (code !== 0) {
                 logger.error(`${logPrefix} 签到任务执行失败，详情已存入日志: ${logFileName}`);
                 const errorMessage = `${logPrefix} 签到任务执行失败，请发送 #自动签到日志 查看详情。`;
                 pushTargets.forEach(targetId => Bot.pickFriend(targetId).sendMsg(errorMessage).catch(err => logger.error(`通知[${targetId}]失败`, err)));
