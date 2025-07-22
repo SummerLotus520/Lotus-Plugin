@@ -145,18 +145,18 @@ export class lotusCheckin extends plugin {
         if (!fs.existsSync(bbsToolsPath)) {
             return e.reply("错误：未找到 MihoyoBBSTools 文件夹，请确保它已放置在Lotus-Plugin插件目录下。");
         }
-
-        const py = spawn('pip install -r requirements.txt', { cwd: bbsToolsPath, shell: true });
-
-        py.stdout.on('data', (data) => logger.info(`[荷花插件][pip]: ${data}`));
-        py.stderr.on('data', (data) => logger.error(`[荷花插件][pip]: ${data}`));
         
-        py.on('error', (err) => {
+        const pip = spawn('pip', ['install', '-r', 'requirements.txt'], { cwd: bbsToolsPath });
+
+        pip.stdout.on('data', (data) => logger.info(`[荷花插件][pip]: ${data}`));
+        pip.stderr.on('data', (data) => logger.error(`[荷花插件][pip]: ${data}`));
+        
+        pip.on('error', (err) => {
             logger.error(`[荷花插件] 初始化进程启动失败: ${err.message}`);
             return e.reply(`初始化进程启动失败，请检查 "pip" 命令是否可用。`);
         });
 
-        py.on('close', (code) => {
+        pip.on('close', (code) => {
             if (code === 0) {
                 e.reply("依赖库安装成功！");
                 logger.info('[荷花插件] 初始化成功。');
@@ -337,7 +337,8 @@ export class lotusCheckin extends plugin {
             return;
         }
         
-        const py = spawn('python -X utf8 main_multi.py autorun', { cwd: bbsToolsPath, shell: true });
+        const pyArgs = ['-X', 'utf8', '-u', 'main_multi.py', 'autorun'];
+        const py = spawn('python', pyArgs, { cwd: bbsToolsPath });
 
         let stdout = '';
         let stderr = '';
@@ -353,7 +354,7 @@ export class lotusCheckin extends plugin {
         py.on('error', (err) => {
             logger.error(`[荷花插件] 签到进程启动失败: ${err.message}`);
             const pushTargets = (e && e.user_id) ? [e.user_id] : (cfg.masterQQ || []);
-            pushTargets.forEach(targetId => Bot.pickFriend(targetId).sendMsg(`[荷花插件] 签到进程启动失败，请检查 "python" 命令是否可用。`).catch(() => {}));
+            pushTargets.forEach(targetId => Bot.pickFriend(targetId).sendMsg(`[荷花插件] 签到进程启动失败，请检查 "python" 命令是否在系统路径中。`).catch(() => {}));
         });
 
         py.on('close', (code) => {
