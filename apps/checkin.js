@@ -146,10 +146,15 @@ export class lotusCheckin extends plugin {
             return e.reply("错误：未找到 MihoyoBBSTools 文件夹，请确保它已放置在Lotus-Plugin插件目录下。");
         }
 
-        const py = spawn('pip', ['install', '-r', 'requirements.txt'], { cwd: bbsToolsPath });
+        const py = spawn('pip install -r requirements.txt', { cwd: bbsToolsPath, shell: true });
 
         py.stdout.on('data', (data) => logger.info(`[荷花插件][pip]: ${data}`));
         py.stderr.on('data', (data) => logger.error(`[荷花插件][pip]: ${data}`));
+        
+        py.on('error', (err) => {
+            logger.error(`[荷花插件] 初始化进程启动失败: ${err.message}`);
+            return e.reply(`初始化进程启动失败，请检查 "pip" 命令是否可用。`);
+        });
 
         py.on('close', (code) => {
             if (code === 0) {
@@ -332,7 +337,7 @@ export class lotusCheckin extends plugin {
             return;
         }
         
-        const py = spawn('python', ['-X', 'utf8', 'main_multi.py', 'autorun'], { cwd: bbsToolsPath });
+        const py = spawn('python -X utf8 main_multi.py autorun', { cwd: bbsToolsPath, shell: true });
 
         let stdout = '';
         let stderr = '';
@@ -343,6 +348,12 @@ export class lotusCheckin extends plugin {
 
         py.stderr.on('data', (data) => {
             stderr += data.toString();
+        });
+        
+        py.on('error', (err) => {
+            logger.error(`[荷花插件] 签到进程启动失败: ${err.message}`);
+            const pushTargets = (e && e.user_id) ? [e.user_id] : (cfg.masterQQ || []);
+            pushTargets.forEach(targetId => Bot.pickFriend(targetId).sendMsg(`[荷花插件] 签到进程启动失败，请检查 "python" 命令是否可用。`).catch(() => {}));
         });
 
         py.on('close', (code) => {
