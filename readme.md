@@ -37,6 +37,10 @@ git clone https://github.com/SummerLotus520/xiaoyao-cvs-plugin.git
 
 # 使用 --recurse-submodules 克隆本插件
 git clone --recurse-submodules https://github.com/SummerLotus520/Lotus-Plugin.git
+# 安装依赖
+pnpm install -P
+#荷花Fork版使用Yarn4
+yarn install
 ```
 
 ### 步骤 3：配置插件

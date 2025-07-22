@@ -75,6 +75,7 @@ export class lotusCheckin extends plugin {
             
             this.setupScheduler(pluginConfig, logBlock);
             this.setupRefreshScheduler(pluginConfig, logBlock);
+            this.cleanupOldLogs(pluginConfig, logBlock);
 
             if (pluginConfig.autoCatchUp !== true) {
                 logBlock.push('[补签] 功能已禁用 (可在config.yaml中开启)');
@@ -134,6 +135,38 @@ export class lotusCheckin extends plugin {
             this.batchRefresh(null);
         });
         logBlock.push(`[任务] 定时批量刷新已安排, 执行时间: ${pluginConfig.autoRefresh.schedule}`);
+    }
+
+    cleanupOldLogs(pluginConfig, logBlock) {
+        const days = pluginConfig.logRetentionDays || 7;
+        if (days <= 0) {
+            logBlock.push('[清理] 自动清理日志功能已禁用。');
+            return;
+        }
+
+        try {
+            const files = fs.readdirSync(logArchiveDir);
+            const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+            let deletedCount = 0;
+
+            for (const file of files) {
+                if (!file.endsWith('.log')) continue;
+                
+                try {
+                    const fileTimestamp = new Date(file.split('.log')[0]).getTime();
+                    if (!isNaN(fileTimestamp) && fileTimestamp < cutoff) {
+                        fs.unlinkSync(path.join(logArchiveDir, file));
+                        deletedCount++;
+                    }
+                } catch (e) {
+                    continue;
+                }
+            }
+            logBlock.push(`[清理] 日志清理完成，共删除 ${deletedCount} 个超过 ${days} 天的旧日志。`);
+        } catch (error) {
+            logBlock.push(`[清理] 清理旧日志时发生错误: ${error.message}`);
+            logger.error(`[荷花插件] 清理旧日志时发生错误:`, error);
+        }
     }
 
     async help(e) {
