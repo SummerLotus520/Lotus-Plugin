@@ -136,14 +136,14 @@ export class lotusCheckin extends plugin {
     }
 
     async help(e) {
-        await e.reply("【自动签到帮助】\n#注册自动签到 : 创建签到配置。\n#刷新自动签到 : 更新签到配置。\n\n---主人指令---\n#初始化签到环境 : 安装Python依赖。\n#测试签到 : 手动执行一次签到，并将结果私聊发给你。\n#批量刷新签到 : 为所有用户刷新CK。\n#自动签到日志 : 获取最近一次的完整签到日志。");
+        await e.reply("【自动签到帮助】\n#注册自动签到 : 创建签到配置。\n#刷新自动签到 : 更新签到配置。\n\n---主人指令---\n#初始化签到环境 : 安装Python依赖。\n#测试签到 : 手动执行一次签到，并将结果私聊发给你。\n#批量刷新签到 : 为所有用户刷新CK。\n#自动签到日志 : 获取最近一次的完整签到日志文件。");
         return true;
     }
 
     async initialize(e) {
         await e.reply("正在开始初始化Python环境，将安装依赖库，请稍候...");
         if (!fs.existsSync(bbsToolsPath)) {
-            return e.reply("错误：未找到 MihoyoBBSTools 文件夹，请确保同步了子模块。");
+            return e.reply("错误：未找到 MihoyoBBSTools 文件夹，请确保它已放置在Lotus-Plugin插件目录下。");
         }
 
         exec('pip install -r requirements.txt', { cwd: bbsToolsPath }, (error, stdout, stderr) => {
@@ -301,16 +301,15 @@ export class lotusCheckin extends plugin {
         const logPath = path.join(logArchiveDir, latestLogFile);
         
         try {
-            const logContent = fs.readFileSync(logPath, 'utf8');
-            const forwardMsg = await Bot.makeForwardMsg([{
-                user_id: Bot.uin,
-                nickname: '签到日志',
-                message: logContent || '日志文件为空'
-            }]);
-            await e.reply(forwardMsg);
+            await e.reply(`正在发送最近的签到日志文件: ${latestLogFile}`);
+            if (e.isGroup) {
+                await e.group.sendFile(logPath);
+            } else {
+                await e.friend.sendFile(logPath);
+            }
         } catch (error) {
-            logger.error(`[荷花插件] 读取或转发日志失败: ${error}`);
-            await e.reply("读取最新日志文件失败，请查看控制台。");
+            logger.error(`[荷花插件] 发送日志文件失败: ${error}`);
+            await e.reply("发送日志文件失败，请检查机器人文件上传权限或查看控制台日志。");
         }
         return true;
     }
@@ -327,7 +326,7 @@ export class lotusCheckin extends plugin {
             return;
         }
 
-        exec(`python main_multi.py autorun`, { cwd: bbsToolsPath, timeout: 300000 }, (error, stdout, stderr) => {
+        exec(`python -X utf8 main_multi.py autorun`, { cwd: bbsToolsPath, timeout: 300000 }, (error, stdout, stderr) => {
             const logPrefix = `[荷花插件][${triggerSource}]`;
             const fullLog = error ? `${logPrefix}\n${stdout}\n${stderr}\nError: ${error.message}` : `${logPrefix}\n${stdout}`;
 
