@@ -182,7 +182,7 @@ export class lotusCheckin extends plugin {
     }
 
     async help(e) {
-        await e.reply("【自动签到帮助】\n#注册自动签到 : 创建签到配置。\n#刷新自动签到 : 更新签到配置。\n\n---主人指令---\n#初始化签到环境 : 安装Python依赖。\n#测试签到 : 手动执行一次签到，并将结果私聊发给你。\n#批量刷新签到 : 为所有用户刷新CK。\n#自动签到日志 : 获取最近一次的完整签到日志文件。");
+        await e.reply("点击查看帮助：https://lotusshared.cn/2025/07/23/lotuspluginhelp/");
         return true;
     }
 
