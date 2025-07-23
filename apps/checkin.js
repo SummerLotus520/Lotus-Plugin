@@ -153,7 +153,8 @@ export class lotusCheckin extends plugin {
                 if (!file.endsWith('.log')) continue;
                 
                 try {
-                    const fileTimestamp = new Date(file.split('.log')[0]).getTime();
+                    const dateStr = file.slice(0, -4).replace('_', 'T').replace(/-/g, ':').replace(':', '-').replace(':', '-');
+                    const fileTimestamp = new Date(dateStr).getTime();
                     if (!isNaN(fileTimestamp) && fileTimestamp < cutoff) {
                         fs.unlinkSync(path.join(logArchiveDir, file));
                         deletedCount++;
@@ -167,6 +168,17 @@ export class lotusCheckin extends plugin {
             logBlock.push(`[清理] 清理旧日志时发生错误: ${error.message}`);
             logger.error(`[荷花插件] 清理旧日志时发生错误:`, error);
         }
+    }
+    
+    getLocalTimestamp() {
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = (now.getMonth() + 1).toString().padStart(2, '0');
+        const day = now.getDate().toString().padStart(2, '0');
+        const hours = now.getHours().toString().padStart(2, '0');
+        const minutes = now.getMinutes().toString().padStart(2, '0');
+        const seconds = now.getSeconds().toString().padStart(2, '0');
+        return `${year}-${month}-${day}_${hours}-${minutes}-${seconds}`;
     }
 
     async help(e) {
@@ -224,7 +236,7 @@ export class lotusCheckin extends plugin {
         const success = await this._updateSingleUser(e.user_id);
 
         if (success) {
-            await e.reply(`您的签到配置已${isRefresh ? '刷新' : '创建'}成功！`);
+            await e.reply(`用户[${e.user_id}]的签到配置已${isRefresh ? '刷新' : '创建'}成功！`);
         } else {
             await e.reply(`操作失败！\n请先发送 #扫码登录 绑定CK，或联系管理员查看日志。`);
         }
@@ -394,7 +406,7 @@ export class lotusCheckin extends plugin {
             const logPrefix = `[荷花插件][${triggerSource}]`;
             const fullLog = (code !== 0) ? `${logPrefix}\n${stdout}\nProcess exited with code: ${code}` : `${logPrefix}\n${stdout}`;
 
-            const logFileName = `${new Date().toISOString().replace(/[:.]/g, '-')}.log`;
+            const logFileName = `${this.getLocalTimestamp()}.log`;
             const logFilePath = path.join(logArchiveDir, logFileName);
             fs.writeFileSync(logFilePath, fullLog, 'utf8');
 
