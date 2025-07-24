@@ -29,7 +29,7 @@ const lastRunLogPath = path.join(dataDir, 'lastRun.log');
 export class lotusCheckin extends plugin {
     constructor() {
         super({
-            name: '荷花自动签到',
+            name: '[荷花插件] 自动签到',
             dsc: '集成MihoyoBBSTools，提供自动签到服务',
             event: 'message',
             priority: 500,

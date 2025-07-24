@@ -8,7 +8,7 @@ function sleep(ms) {
 export class allDaily extends plugin {
   constructor() {
     super({
-      name: '全部体力',
+      name: '[荷花插件] 全部体力',
       dsc: '触发 #体力、*体力、%体力',
       event: 'message',
       priority: 10,
