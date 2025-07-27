@@ -2,7 +2,7 @@ import plugin from '../../../lib/plugins/plugin.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import schedule from 'node-schedule';
 import cfg from '../../../lib/config/config.js';
 import iconv from 'iconv-lite';
@@ -48,11 +48,43 @@ export class lotusCheckin extends plugin {
         
         this.task = null;
         this.refreshTask = null;
-        
+        this.pythonCmd = null;
+        this.pipCmd = null;
+
+        this._determineCommands();
         this.checkAndCreateConfig();
         this.runStartupSequence();
 
         global.lotusPluginLoaded = true;
+    }
+
+    _determineCommands() {
+        try {
+            execSync('python3 --version', { stdio: 'ignore' });
+            this.pythonCmd = 'python3';
+        } catch (e) {
+            try {
+                execSync('python --version', { stdio: 'ignore' });
+                this.pythonCmd = 'python';
+            } catch (e2) {
+                logger.warn('[荷花插件] 无法找到 "python" 或 "python3" 命令，将默认使用 "python"，后续操作可能失败。');
+                this.pythonCmd = 'python';
+            }
+        }
+
+        try {
+            execSync('pip3 --version', { stdio: 'ignore' });
+            this.pipCmd = 'pip3';
+        } catch (e) {
+            try {
+                execSync('pip --version', { stdio: 'ignore' });
+                this.pipCmd = 'pip';
+            } catch (e2) {
+                logger.warn('[荷花插件] 无法找到 "pip" 或 "pip3" 命令，将默认使用 "pip"，后续操作可能失败。');
+                this.pipCmd = 'pip';
+            }
+        }
+        logger.info(`[荷花插件] 已确定使用命令: ${this.pythonCmd} 和 ${this.pipCmd}`);
     }
 
     checkAndCreateConfig() {
@@ -192,14 +224,14 @@ export class lotusCheckin extends plugin {
             return e.reply("错误：未找到 MihoyoBBSTools 文件夹，请确保它已放置在Lotus-Plugin插件目录下。");
         }
         
-        const pip = spawn('pip', ['install', '-r', 'requirements.txt'], { cwd: bbsToolsPath });
+        const pip = spawn(this.pipCmd, ['install', '-r', 'requirements.txt'], { cwd: bbsToolsPath });
 
         pip.stdout.on('data', (data) => logger.info(`[荷花插件][pip]: ${data}`));
         pip.stderr.on('data', (data) => logger.error(`[荷花插件][pip]: ${data}`));
         
         pip.on('error', (err) => {
             logger.error(`[荷花插件] 初始化进程启动失败: ${err.message}`);
-            return e.reply(`初始化进程启动失败，请检查 "pip" 命令是否可用。`);
+            return e.reply(`初始化进程启动失败，请检查 "${this.pipCmd}" 命令是否可用。`);
         });
 
         pip.on('close', (code) => {
@@ -384,14 +416,14 @@ export class lotusCheckin extends plugin {
         }
         
         const tempLogfile = path.join(bbsToolsPath, `temp_run_${Date.now()}.log`);
-        const command = `python -u main_multi.py autorun > "${tempLogfile}" 2>&1`;
+        const command = `${this.pythonCmd} -u main_multi.py autorun > "${tempLogfile}" 2>&1`;
 
         const py = spawn(command, { cwd: bbsToolsPath, shell: true });
         
         py.on('error', (err) => {
             logger.error(`[荷花插件] 签到进程启动失败: ${err.message}`);
             const pushTargets = (e && e.user_id) ? [e.user_id] : (cfg.masterQQ || []);
-            pushTargets.forEach(targetId => Bot.pickFriend(targetId).sendMsg(`[荷花插件] 签到进程启动失败，请检查 "python" 命令是否可用。`).catch(() => {}));
+            pushTargets.forEach(targetId => Bot.pickFriend(targetId).sendMsg(`[荷花插件] 签到进程启动失败，请检查 "${this.pythonCmd}" 命令是否可用。`).catch(() => {}));
         });
 
         py.on('close', (code) => {
