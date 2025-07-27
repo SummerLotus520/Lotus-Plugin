@@ -2,26 +2,20 @@ import plugin from '../../../lib/plugins/plugin.js';
 import fetch from 'node-fetch';
 import fs from 'node:fs';
 import path from 'node:path';
-import { exec, execFile, spawn } from 'child_process';
+import { spawn } from 'child_process';
 import ConfigLoader from '../model/config_loader.js';
 
 // --- 路径和常量 ---
 const pluginRoot = path.resolve(process.cwd(), 'plugins', 'Lotus-Plugin');
 const dataDir = path.join(pluginRoot, 'data', 'bilibili');
 const configDir = path.join(pluginRoot, 'config');
-
 const BILI_VIDEO_INFO_API = "http://api.bilibili.com/x/web-interface/view";
 const BILI_PLAY_STREAM_API = "https://api.bilibili.com/x/player/playurl";
 const BILI_STREAM_INFO_API = "https://api.live.bilibili.com/room/v1/Room/get_info";
-const BILI_STREAM_FLV_API = "https://api.live.bilibili.com/room/v1/Room/playUrl";
-const BILI_DYNAMIC_API = "https://api.vc.bilibili.com/dynamic_svr/v1/dynamic_svr/get_dynamic_detail?dynamic_id={}";
-const BILI_ARTICLE_API = "https://api.bilibili.com/x/article/viewinfo?id={}";
-
 const COMMON_HEADER = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36',
     'Referer': 'https://www.bilibili.com/',
 };
-
 const BILI_DFN_MAP = {
     120: "4K 超高清", 116: "1080P 60帧", 112: "1080P 高码率", 80: "1080P 高清",
     74: "720P 60帧", 64: "720P 高清", 32: "480P 清晰", 16: "360P 流畅",
@@ -31,66 +25,48 @@ export class BilibiliParser extends plugin {
     constructor() {
         super({
             name: '[荷花插件] B站解析',
-            dsc: '处理B站视频、直播、动态、文章等链接',
+            dsc: '处理B站视频、直播链接',
             event: 'message',
             priority: 4100,
             rule: [
-                {
-                    reg: '(bilibili.com|b23.tv|bili2233.cn|t.bilibili.com|^BV[1-9a-zA-Z]{10}$)',
-                    fnc: 'parse' 
-                },
+                { reg: 'bilibili.com|b23.tv|^BV[1-9a-zA-Z]{10}$|^av[0-9]+', fnc: 'parse' },
                 { reg: '^#B站登录$', fnc: 'login', permission: 'master' }
             ]
         });
         if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
     }
-    
-    // 【最终移植版】 parse 函数
-    async parse(e) {
-        // 1. 消息内容获取逻辑
-        let url = e.msg === undefined ? (e.message?.[0]?.data || "").replaceAll("\\", "") : e.msg.trim().replaceAll("\\", "");
 
-        // 2. 增加一个初步的关键词过滤，避免无关消息进入
-        if (!/(bilibili\.com|b23\.tv|BV[1-9a-zA-Z]{10}|av[0-9]+)/i.test(url)) {
+    async parse(e) {
+        let rawContent = e.msg || "";
+        if (rawContent.startsWith('[CQ:json,data=')) {
+            try {
+                let jsonData = rawContent.substring('[CQ:json,data='.length, rawContent.length - 1);
+                jsonData = jsonData.replace(/,/g, ',').replace(/[/g, '[').replace(/]/g, ']').replace(/&/g, '&');
+                const json = JSON.parse(jsonData);
+                const url = json.meta?.detail_1?.qqdocurl || json.meta?.news?.jumpUrl || json.meta?.detail_1?.url;
+                if (url) rawContent = url;
+            } catch (err) { /* ignore */ }
+        }
+
+        if (!/(bilibili\.com|b23\.tv|^BV[1-9a-zA-Z]{10}$|^av[0-9]+)/i.test(rawContent)) {
             return false;
         }
 
-        // 3. URL预处理逻辑
-        const urlRex = /(?:https?:\/\/)?www\.bilibili\.com\/[A-Za-z\d._?%&+\-=\/#]*/g;
-        const bShortRex = /(http:|https:)\/\/(b23.tv|bili2233.cn)\/[A-Za-z\d._?%&+\-=\/#]*/g;
-        
-        if (/^BV[1-9a-zA-Z]{10}$/.exec(url)?.[0]) {
-            url = `https://www.bilibili.com/video/${url}`;
-        }
-        
-        if (url.includes("b23.tv") || url.includes("bili2233.cn")) {
-            const bShortUrl = bShortRex.exec(url)?.[0];
-            if(bShortUrl) {
-                try {
-                    const resp = await fetch(bShortUrl, { method: "HEAD", redirect: 'follow' });
-                    url = resp.url;
-                } catch(err) { logger.error(`[荷花插件][B站] 短链展开失败: ${err.message}`); return e.reply("短链展开失败，请重试"); }
-            }
-        } else if (url.includes("www.bilibili.com")) {
-            const match = urlRex.exec(url);
-            if(match) url = match[0];
-        }
-
-        if (!url.startsWith("http")) url = "https://" + url;
-
-        // 4. 进入后续的处理分流
         try {
-            if (url.includes("live.bilibili.com")) await this.handleLive(e, url);
-            else if (url.includes("t.bilibili.com") || url.includes("bilibili.com/opus")) await this.handleDynamic(e, url);
-            else if (url.includes("/read/cv")) await this.handleArticle(e, url);
-            else await this.handleVideo(e, url);
+            const normalizedUrl = await this.normalizeUrl(rawContent);
+            if (normalizedUrl.includes("live.bilibili.com")) {
+                await this.handleLive(e, normalizedUrl);
+            } else if (normalizedUrl.includes("/video/")) {
+                await this.handleVideo(e, normalizedUrl);
+            } else {
+                return false;
+            }
         } catch (error) {
-            logger.error(`[荷花插件][B站] 解析失败:`, error);
-            await e.reply(`B站解析失败: ${error.message}`);
+            logger.warn(`[荷花插件][B站] 解析失败: ${error.message}`);
+            return false;
         }
         return true;
     }
-
 
     async handleVideo(e, url) {
         const videoInfo = await this.getVideoInfo(url);
@@ -113,7 +89,7 @@ export class BilibiliParser extends plugin {
                 logger.info(`[荷花插件][B站] 检测到BBDown at ${bbdownPath}，优先使用BBDown下载...`);
                 try {
                     await this.getSessData(true); 
-                    await this.downloadWithBBDown(e, url, tempPath, videoInfo, pParam);
+                    await this.downloadWithBBDown(e, url, tempPath, videoInfo);
                 } catch(loginError) {
                     await e.reply(loginError.message);
                 }
@@ -138,75 +114,15 @@ export class BilibiliParser extends plugin {
         const { title, user_cover } = infoJson.data;
         const liveMessage = [
             segment.image(user_cover),
-            `${ConfigLoader.cfg.general.identifyPrefix} B站直播: ${title}`,
-            `📺 独立播放器: https://www.bilibili.com/blackboard/live/live-activity-player.html?enterTheRoom=0&cid=${roomId}`
-        ].join('\n');
+            `${ConfigLoader.cfg.general.identifyPrefix} B站直播: ${title}\n📺 独立播放器: https://www.bilibili.com/blackboard/live/live-activity-player.html?enterTheRoom=0&cid=${roomId}`
+        ];
         await e.reply(liveMessage);
-
-        const playUrlResp = await fetch(`${BILI_STREAM_FLV_API}?cid=${roomId}&platform=web`, { headers: COMMON_HEADER });
-        const playUrlJson = await playUrlResp.json();
-        const streamUrl = playUrlJson.data?.durl?.[0]?.url;
-
-        if (streamUrl) {
-            const tempFile = path.join(dataDir, `live_${Date.now()}.flv`);
-            await this.recordStream(streamUrl, tempFile, ConfigLoader.cfg.bilibili.streamDuration);
-            await this.sendVideo(e, tempFile, '直播回放.flv');
-        }
-    }
-    
-    async handleDynamic(e, url) {
-        const dynamicIdMatch = url.match(/t.bilibili.com\/(\d+)|opus\/(\d+)/);
-        if (!dynamicIdMatch) throw new Error("无法获取动态ID");
-        const dynamicId = dynamicIdMatch[1] || dynamicIdMatch[2];
-        
-        const { sessdata } = await this.getSessData();
-        if (!sessdata) return e.reply("解析B站动态需要配置SESSDATA或通过BBDown登录。");
-        
-        const resp = await fetch(BILI_DYNAMIC_API.replace('{}', dynamicId), { headers: { ...COMMON_HEADER, Cookie: `SESSDATA=${sessdata}` }});
-        const json = await resp.json();
-        if (json.code !== 0) throw new Error(`获取动态失败: ${json.message}`);
-
-        const card = JSON.parse(json.data.card.card);
-        const item = card.item;
-        let desc = item.description || item.content || "该动态没有文字内容。";
-        let images = item.pictures?.map(p => p.img_src) || [];
-
-        await e.reply(`${ConfigLoader.cfg.general.identifyPrefix} B站动态:\n${desc}`);
-        if (images.length > 0) {
-            const imageMsgs = images.map(img => ({
-                message: segment.image(img),
-                nickname: e.sender.card || e.user_id,
-                user_id: e.user_id
-            }));
-            await e.reply(await Bot.makeForwardMsg(imageMsgs));
-        }
-    }
-
-    async handleArticle(e, url) {
-        const articleIdMatch = url.match(/\/read\/cv(\d+)/);
-        if (!articleIdMatch) throw new Error("无法获取专栏ID");
-        const articleId = articleIdMatch[1];
-        
-        const resp = await fetch(BILI_ARTICLE_API.replace('{}', articleId), { headers: COMMON_HEADER });
-        const json = await resp.json();
-        if (json.code !== 0) throw new Error(`获取专栏失败: ${json.message}`);
-        
-        const data = json.data;
-        await e.reply(`${ConfigLoader.cfg.general.identifyPrefix} B站专栏: ${data.title}\n作者: ${data.author_name}`);
-        if(data.origin_image_urls?.length > 0) {
-            const imageMsgs = data.origin_image_urls.map(img => ({
-                message: segment.image(img),
-                nickname: e.sender.card || e.user_id,
-                user_id: e.user_id
-            }));
-            await e.reply(await Bot.makeForwardMsg(imageMsgs));
-        }
     }
 
     async login(e) {
-        let bbdownPath = await this.findCommandPath('BBDown');
+        const bbdownPath = await this.findCommandPath('BBDown');
         if (!bbdownPath) {
-            return e.reply("未在环境中检测到BBDown，请主人安装并配置好环境变量，或在parser.yaml中配置toolsPath后重试。");
+            return e.reply("未找到BBDown.exe，请主人安装并配置好环境变量，或在parser.yaml中配置toolsPath后重试。");
         }
         
         const qrcodePath = path.join(configDir, 'bbdown_qrcode.png');
@@ -244,16 +160,20 @@ export class BilibiliParser extends plugin {
         return true;
     }
     
-    async downloadWithBBDown(e, url, tempPath, videoInfo, pNum) {
+    async downloadWithBBDown(e, url, tempPath, videoInfo) {
         await fs.promises.mkdir(tempPath, { recursive: true });
-        
+        const pParam = this.getPParam(url);
+        const finalFileName = `${videoInfo.bvid}.mp4`;
+        const tempFileNameForBBDown = videoInfo.bvid;
+
         try {
-            const filename = await this.runBBDown(url, tempPath, videoInfo.bvid, pNum);
-            const fullPath = path.join(tempPath, filename);
-            if (fs.existsSync(fullPath)) {
-                await this.sendVideo(e, fullPath, `BV${videoInfo.bvid}.mp4`);
+            await this.runBBDown(url, tempPath, tempFileNameForBBDown, pParam);
+            const downloadedFile = path.join(tempPath, finalFileName);
+            
+            if (fs.existsSync(downloadedFile)) {
+                await this.sendVideo(e, downloadedFile, finalFileName);
             } else {
-                throw new Error(`BBDown执行完毕，但未找到输出文件: ${filename}`);
+                throw new Error(`BBDown执行完毕，但未找到输出文件: ${finalFileName}`);
             }
         } catch(error) {
             logger.error(`[荷花插件][BBDown] 失败:`, error);
@@ -267,11 +187,13 @@ export class BilibiliParser extends plugin {
          try {
             await e.reply("(小提示：启用BBDown并登录，可解析更高画质和会员视频哦！)");
             await fs.promises.mkdir(tempPath, { recursive: true });
+            
             const pParam = this.getPParam(originalUrl);
             let targetCid = videoInfo.cid;
             if (pParam && videoInfo.pages && videoInfo.pages.length >= pParam) {
                 targetCid = videoInfo.pages[pParam - 1].cid;
             }
+            
             const { videoUrl, audioUrl } = await this.getDownloadUrl(videoInfo.bvid, targetCid);
             if (!videoUrl) throw new Error("未能获取到视频流链接");
 
@@ -286,13 +208,35 @@ export class BilibiliParser extends plugin {
             } else {
                 fs.renameSync(videoFile, outputFile);
             }
-            await this.sendVideo(e, outputFile, `AV${videoInfo.aid}.mp4`);
+            
+            const finalFileName = `av${videoInfo.aid}.mp4`;
+            await this.sendVideo(e, outputFile, finalFileName);
+
         } catch(error) {
             logger.error(`[荷花插件][API下载] 失败:`, error);
             await e.reply(`视频下载失败: ${error.message}`);
         } finally {
             if (fs.existsSync(tempPath)) fs.rm(tempPath, { recursive: true, force: true }, () => {});
         }
+    }
+    
+    async normalizeUrl(input) {
+        const match = input.match(/https?:\/\/[^\s]+/);
+        if (!match) {
+            if (/(^BV[1-9a-zA-Z]{10}$)|(^av[0-9]+$)/.test(input)) return `https://www.bilibili.com/video/${input}`;
+            throw new Error("无法识别的链接格式");
+        }
+        let url = match[0];
+        if (url.includes("b23.tv")) {
+             try {
+                const resp = await fetch(url, { method: 'HEAD', redirect: 'follow' });
+                return resp.url;
+            } catch (err) {
+                logger.error(`[荷花插件][B站] 短链展开失败: ${err.message}`);
+                throw new Error("展开B站短链失败");
+            }
+        }
+        return url;
     }
     
     async getVideoInfo(url) {
@@ -350,17 +294,15 @@ export class BilibiliParser extends plugin {
     }
 
     mergeFiles(videoFile, audioFile, outputFile) {
-        return new Promise((resolve, reject) => {
-            const command = `ffmpeg -i "${videoFile}" -i "${audioFile}" -c copy "${outputFile}"`;
-            exec(command, (error, stdout, stderr) => {
-                if (error) { logger.error(`[荷花插件][FFmpeg] 合并失败: ${stderr}`); return reject(new Error("FFmpeg合并音视频失败")); }
-                resolve();
-            });
+        return new Promise(async (resolve, reject) => {
+            const ffmpegPath = await this.findCommandPath('ffmpeg');
+            if (!ffmpegPath) return reject(new Error("未找到ffmpeg"));
+            const ffmpeg = spawn(ffmpegPath, ['-i', videoFile, '-i', audioFile, '-c', 'copy', outputFile]);
+            ffmpeg.on('close', code => code === 0 ? resolve() : reject(new Error("FFmpeg合并音视频失败")));
+            ffmpeg.on('error', reject);
         });
     }
     
-    getSenderInfo(e) { return { nickname: e.sender.card || e.user_id, user_id: e.user_id }; }
-
     downloadFile(dest, url, headers = COMMON_HEADER) {
         return new Promise((resolve, reject) => {
             fetch(url, { headers }).then(res => {
@@ -376,12 +318,8 @@ export class BilibiliParser extends plugin {
     async uploadFile(e, filePath, fileName) {
         try {
             if (e.isGroup && e.group.fs.upload) {
-                await e.group.fs.upload(filePath, e.group.cwd, fileName);
-            } else if (e.isGroup && e.group.sendFile) { // 兼容旧版
-                await e.group.sendFile(filePath);
-            } else {
-                await e.reply("当前环境无法上传文件。");
-            }
+                await e.group.fs.upload(filePath, { name: fileName });
+            } else { await e.group.sendFile(filePath); }
         } finally {
             if (fs.existsSync(filePath)) fs.unlink(filePath, ()=>{});
         }
@@ -391,8 +329,9 @@ export class BilibiliParser extends plugin {
         try {
             const stats = fs.statSync(filePath);
             const videoSize = Math.floor(stats.size / (1024 * 1024));
-            if (videoSize > ConfigLoader.cfg.general.videoSizeLimit) {
-                await e.reply(`视频大小(${videoSize}MB)超过${ConfigLoader.cfg.general.videoSizeLimit}MB限制，转为上传群文件。`);
+            const cfg = ConfigLoader.cfg;
+            if (videoSize > cfg.general.videoSizeLimit) {
+                await e.reply(`视频大小(${videoSize}MB)超过${cfg.general.videoSizeLimit}MB限制，转为上传群文件。`);
                 await this.uploadFile(e, filePath, fileName);
             } else {
                 await e.reply(segment.video(filePath));
@@ -402,16 +341,6 @@ export class BilibiliParser extends plugin {
             if (fs.existsSync(filePath)) fs.unlink(filePath, () => {});
             throw err;
         }
-    }
-
-    recordStream(streamUrl, dest, duration) {
-        return new Promise((resolve, reject) => {
-            const command = `ffmpeg -i "${streamUrl}" -t ${duration} -c copy "${dest}"`;
-            exec(command, (error, stdout, stderr) => {
-                 if (error) { logger.error(`[荷花插件][FFmpeg] 录制失败: ${stderr}`); return reject(new Error("直播录制失败")); }
-                 resolve();
-            });
-        });
     }
     
     async findCommandPath(command) {
@@ -457,13 +386,12 @@ export class BilibiliParser extends plugin {
         return { sessdata: "", source: 'none' };
     }
 
-    async runBBDown(url, cwd, bvid, pageNum) {
+    async runBBDown(url, cwd, filenameWithoutExt, pageNum) {
         const cfg = ConfigLoader.cfg;
         const bbdownPath = await this.findCommandPath('BBDown');
         if (!bbdownPath) throw new Error("未找到BBDown，请检查环境配置");
 
-        const filename = `BV${bvid}`;
-        const args = [ url, '--work-dir', cwd, '-F', filename ];
+        const args = [ url, '--work-dir', cwd, '-F', filenameWithoutExt ];
         if (cfg.bilibili.useAria2) args.push('--use-aria2c');
         
         const { sessdata, source } = await this.getSessData();
@@ -477,11 +405,19 @@ export class BilibiliParser extends plugin {
         if (preferredDfn) args.push('--dfn-priority', preferredDfn);
 
         return new Promise((resolve, reject) => {
+            const bbdown = spawn(bbdownPath, args);
             let output = '';
-            const bbdown = execFile(bbdownPath, args, { timeout: 600000 });
+            
             bbdown.stdout.on('data', (data) => { output += data.toString(); });
             bbdown.stderr.on('data', (data) => { output += data.toString(); });
-            bbdown.on('close', (code) => code === 0 ? resolve(`${filename}.mp4`) : reject(new Error(`BBDown进程退出，代码: ${code}\n日志: ${output}`)));
+
+            bbdown.on('close', (code) => {
+                if (code === 0) {
+                    resolve();
+                } else {
+                    reject(new Error(`BBDown进程退出，代码: ${code}\n日志: ${output}`));
+                }
+            });
             bbdown.on('error', (err) => reject(err));
         });
     }
