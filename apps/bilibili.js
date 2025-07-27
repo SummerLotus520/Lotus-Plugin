@@ -36,8 +36,8 @@ export class BilibiliParser extends plugin {
             priority: 4100,
             rule: [
                 {
-                    reg: 'bilibili.com|b23.tv|BV|av',
-                    fnc: 'parse'
+                    reg: '(bilibili.com|b23.tv|bili2233.cn|t.bilibili.com|^BV[1-9a-zA-Z]{10}$)',
+                    fnc: 'parse' 
                 },
                 { reg: '^#B站登录$', fnc: 'login', permission: 'master' }
             ]
@@ -45,80 +45,52 @@ export class BilibiliParser extends plugin {
         if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
     }
     
+    // 【最终移植版】 parse 函数
     async parse(e) {
-        let contentToParse = e.msg || "";
+        // 1. 消息内容获取逻辑
+        let url = e.msg === undefined ? (e.message?.[0]?.data || "").replaceAll("\\", "") : e.msg.trim().replaceAll("\\", "");
 
-        // 【修正】处理CQ码JSON
-        if (contentToParse.startsWith('[CQ:json,data=')) {
-            try {
-                let jsonData = contentToParse.substring('[CQ:json,data='.length, contentToParse.length - 1);
-                jsonData = jsonData.replace(/,/g, ',').replace(/[/g, '[').replace(/]/g, ']').replace(/&/g, '&');
-                const json = JSON.parse(jsonData);
-                const url = json.meta?.detail_1?.qqdocurl || json.meta?.news?.jumpUrl || json.meta?.detail_1?.url;
-                if (url) {
-                    contentToParse = url; // 成功提取URL，用它覆盖原始内容
-                }
-            } catch (err) { /* 解析失败则忽略，继续使用原始内容 */ }
-        }
-
-        // 【修正】用一个更包容的正则来初步判断是否需要处理
-        if (!/bilibili\.com|b23\.tv|BV[1-9a-zA-Z]{10}|av[0-9]+/i.test(contentToParse)) {
+        // 2. 增加一个初步的关键词过滤，避免无关消息进入
+        if (!/(bilibili\.com|b23\.tv|BV[1-9a-zA-Z]{10}|av[0-9]+)/i.test(url)) {
             return false;
         }
 
+        // 3. URL预处理逻辑
+        const urlRex = /(?:https?:\/\/)?www\.bilibili\.com\/[A-Za-z\d._?%&+\-=\/#]*/g;
+        const bShortRex = /(http:|https:)\/\/(b23.tv|bili2233.cn)\/[A-Za-z\d._?%&+\-=\/#]*/g;
+        
+        if (/^BV[1-9a-zA-Z]{10}$/.exec(url)?.[0]) {
+            url = `https://www.bilibili.com/video/${url}`;
+        }
+        
+        if (url.includes("b23.tv") || url.includes("bili2233.cn")) {
+            const bShortUrl = bShortRex.exec(url)?.[0];
+            if(bShortUrl) {
+                try {
+                    const resp = await fetch(bShortUrl, { method: "HEAD", redirect: 'follow' });
+                    url = resp.url;
+                } catch(err) { logger.error(`[荷花插件][B站] 短链展开失败: ${err.message}`); return e.reply("短链展开失败，请重试"); }
+            }
+        } else if (url.includes("www.bilibili.com")) {
+            const match = urlRex.exec(url);
+            if(match) url = match[0];
+        }
+
+        if (!url.startsWith("http")) url = "https://" + url;
+
+        // 4. 进入后续的处理分流
         try {
-            // 将可能包含干扰文本的内容传入，由normalizeUrl精确提取
-            const normalizedUrl = await this.normalizeUrl(contentToParse);
-            
-            if (normalizedUrl.includes("live.bilibili.com")) await this.handleLive(e, normalizedUrl);
-            else if (normalizedUrl.includes("t.bilibili.com") || normalizedUrl.includes("bilibili.com/opus")) await this.handleDynamic(e, normalizedUrl);
-            else if (normalizedUrl.includes("/read/cv")) await this.handleArticle(e, normalizedUrl);
-            else await this.handleVideo(e, normalizedUrl);
-
-        } catch (error) { 
-            logger.warn(`[荷花插件][B站] 解析失败: ${error.message}`); 
-            return false;
+            if (url.includes("live.bilibili.com")) await this.handleLive(e, url);
+            else if (url.includes("t.bilibili.com") || url.includes("bilibili.com/opus")) await this.handleDynamic(e, url);
+            else if (url.includes("/read/cv")) await this.handleArticle(e, url);
+            else await this.handleVideo(e, url);
+        } catch (error) {
+            logger.error(`[荷花插件][B站] 解析失败:`, error);
+            await e.reply(`B站解析失败: ${error.message}`);
         }
         return true;
     }
 
-    async normalizeUrl(input) {
-        const urlMatch = input.match(/https?:\/\/[a-zA-Z0-9\.\/=\?&%_#-]+/);
-        const bvMatch = input.match(/(BV[1-9a-zA-Z]{10})/);
-        const avMatch = input.match(/(av[0-9]+)/);
-
-        let url;
-
-        if (urlMatch && (urlMatch[0].includes('bilibili.com') || urlMatch[0].includes('b23.tv'))) {
-            url = urlMatch[0];
-        } else if (bvMatch) {
-            url = `https://www.bilibili.com/video/${bvMatch[0]}`;
-        } else if (avMatch) {
-            url = `https://www.bilibili.com/video/${avMatch[0]}`;
-        } else {
-            throw new Error("无法从消息中提取有效的B站链接或ID");
-        }
-
-        if (url.includes("b23.tv")) {
-             try {
-                // 去除链接末尾可能存在的干扰字符，例如"?"后面的跟踪参数有时会导致问题
-                const cleanUrl = url.split('?')[0];
-                const resp = await fetch(cleanUrl, {
-                    method: 'GET',
-                    redirect: 'follow',
-                    headers: { 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.3 Mobile/15E148 Safari/604.1' }
-                });
-                return resp.url;
-            } catch (err) {
-                logger.error(`[荷花插件][B站] 展开短链失败:`, err);
-                throw new Error("展开B站短链失败");
-            }
-        }
-        
-        if (!url.startsWith("http")) url = "https://" + url;
-        
-        return url;
-    }
 
     async handleVideo(e, url) {
         const videoInfo = await this.getVideoInfo(url);
