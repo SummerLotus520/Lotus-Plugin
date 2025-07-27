@@ -44,32 +44,46 @@ export class BilibiliParser extends plugin {
     }
 
     async parse(e) {
-        let url;
-        if (e.isjson) {
+        logger.debug('[荷花插件-B站调试] 收到消息，进入parse函数。');
+        let rawContent;
+
+        if (e.msg && e.msg.startsWith('[CQ:json,data=')) {
+            logger.debug('[荷花插件-B站调试] 检测到CQ码JSON消息。');
             try {
-                const json = JSON.parse(e.msg);
-                // 尝试从常见的小程序/卡片结构中提取跳转URL
-                // 这里的字段是根据常见的QQ小程序卡片结构推断的
-                url = json.meta?.detail_1?.qqdocurl 
-                   || json.meta?.news?.jumpUrl 
-                   || json.meta?.detail_1?.url;
+                let jsonData = e.msg.substring('[CQ:json,data='.length, e.msg.length - 1);
+                jsonData = jsonData.replace(/,/g, ',').replace(/[/g, '[').replace(/]/g, ']').replace(/&/g, '&');
+                logger.debug(`[荷花插件-B站调试] 反转义后的JSON字符串: ${jsonData}`);
                 
-                // 如果没有提取到URL，或者提取到的URL不是B站的，则放弃处理
-                if (!url || !/(bilibili\.com|b23\.tv)/.test(url)) {
-                    return false; 
+                const json = JSON.parse(jsonData);
+                const url = json.meta?.detail_1?.qqdocurl 
+                           || json.meta?.news?.jumpUrl 
+                           || json.meta?.detail_1?.url;
+                
+                logger.debug(`[荷花插件-B站调试] 从JSON中提取的URL: ${url}`);
+                
+                if (url && /(bilibili\.com|b23\.tv)/.test(url)) {
+                    rawContent = url;
+                } else {
+                    logger.debug('[荷花插件-B站调试] JSON卡片不是B站相关，已忽略。');
+                    return false;
                 }
-                logger.info(`[荷花插件][B站] 已识别到分享卡片，提取URL: ${url}`);
             } catch (err) {
-                // JSON解析失败，说明不是我们的目标卡片，不处理
+                logger.warn(`[荷花插件-B站调试] 解析JSON卡片失败: ${err.message}`);
                 return false; 
             }
         } else {
-            // 如果是普通文本消息，直接使用消息内容
-            url = e.msg.trim();
+            rawContent = e.msg?.trim();
+            logger.debug(`[荷花插件-B站调试] 识别为普通文本消息: ${rawContent}`);
+        }
+
+        if (!rawContent || !/(bilibili\.com|b23\.tv|^BV[1-9a-zA-Z]{10}$|^av[0-9]+$)/.test(rawContent)) {
+            logger.debug('[荷花插件-B站调试] 初步检测内容不含B站特征，已忽略。');
+            return false;
         }
 
         try {
-            const normalizedUrl = await this.normalizeUrl(url);
+            const normalizedUrl = await this.normalizeUrl(rawContent);
+            logger.debug(`[荷花插件-B站调试] 规范化后的URL: ${normalizedUrl}`);
             
             if (normalizedUrl.includes("live.bilibili.com")) await this.handleLive(e, normalizedUrl);
             else if (normalizedUrl.includes("t.bilibili.com") || normalizedUrl.includes("bilibili.com/opus")) await this.handleDynamic(e, normalizedUrl);
@@ -77,7 +91,9 @@ export class BilibiliParser extends plugin {
             else await this.handleVideo(e, normalizedUrl);
 
         } catch (error) { 
-            logger.warn(`[荷花插件][B站] ${error.message}`); 
+            logger.error(`[荷花插件-B站调试] 最终处理失败:`, error); 
+            // 将原始的警告信息发送给用户，方便调试
+            e.reply(`B站解析失败: ${error.message}`);
             return false;
         }
         return true;
@@ -287,21 +303,42 @@ export class BilibiliParser extends plugin {
     }
     
     async normalizeUrl(input) {
-        const match = input.match(/https?:\/\/[^\s]+/);
-        if (!match) {
-            if (/(^BV[1-9a-zA-Z]{10}$)|(^av[0-9]+$)/.test(input)) return `https://www.bilibili.com/video/${input}`;
+        logger.debug(`[荷花插件-B站调试] 进入normalizeUrl函数，输入: ${input}`);
+        
+        const match = input.match(/https?:\/\/(www\.bilibili\.com\/video\/[a-zA-Z0-9]+|b23\.tv\/[a-zA-Z0-9]+|www\.bilibili\.com\/read\/cv[0-9]+|t\.bilibili\.com\/\d+|live\.bilibili\.com\/\d+)[^\s]*/);
+        let url;
+
+        if (match) {
+            url = match[0];
+            logger.debug(`[荷花插件-B站调试] 从输入中正则匹配到URL: ${url}`);
+        } else if (/(^BV[1-9a-zA-Z]{10}$)|(^av[0-9]+$)/.test(input)) {
+            url = `https://www.bilibili.com/video/${input}`;
+            logger.debug(`[荷花插件-B站调试] 识别为独立ID，构造URL: ${url}`);
+            return url;
+        } else {
             throw new Error("无法识别的链接格式");
         }
-        let url = match[0];
+
         if (url.includes("b23.tv")) {
+            logger.debug(`[荷花插件-B站调试] 检测到b23.tv短链，开始展开...`);
              try {
-                const resp = await axios.head(url, { maxRedirects: 5 });
-                return resp.request.res.responseUrl || url;
+                const resp = await fetch(url, {
+                    method: 'GET', // 使用GET而不是HEAD，有些服务器对HEAD的响应不完整
+                    redirect: 'follow',
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.3 Mobile/15E148 Safari/604.1'
+                    }
+                });
+                logger.info(`[荷花插件][B站] 短链 ${url} 已成功展开为: ${resp.url}`);
+                return resp.url;
             } catch (err) {
-                if (err.request?.res?.responseUrl) return err.request.res.responseUrl;
-                return url;
+                logger.error(`[荷花插件][B站] 展开短链失败:`, err);
+                throw new Error("展开B站短链失败");
             }
         }
+        
+        if (!url.startsWith("http")) url = "https://" + url;
+        
         return url;
     }
     
