@@ -13,6 +13,11 @@
   },
   "author": "MOPELotus",
   "dependencies": {
-    "iconv-lite": "^0.6.3"
+    "axios": "^1.7.2",
+    "https-proxy-agent": "^7.0.5",
+    "iconv-lite": "^0.6.3",
+    "lodash": "^4.17.21",
+    "node-fetch": "^3.3.2",
+    "yaml": "^2.4.5"
   }
 }
