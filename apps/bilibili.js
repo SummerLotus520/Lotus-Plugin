@@ -46,26 +46,29 @@ export class BilibiliParser extends plugin {
     }
     
     async parse(e) {
-        let rawContent = e.msg || "";
+        let contentToParse = e.msg || "";
 
-        // 1. 优先处理CQ码JSON
-        if (rawContent.startsWith('[CQ:json,data=')) {
+        // 【修正】处理CQ码JSON
+        if (contentToParse.startsWith('[CQ:json,data=')) {
             try {
-                let jsonData = rawContent.substring('[CQ:json,data='.length, rawContent.length - 1);
+                let jsonData = contentToParse.substring('[CQ:json,data='.length, contentToParse.length - 1);
                 jsonData = jsonData.replace(/,/g, ',').replace(/[/g, '[').replace(/]/g, ']').replace(/&/g, '&');
                 const json = JSON.parse(jsonData);
                 const url = json.meta?.detail_1?.qqdocurl || json.meta?.news?.jumpUrl || json.meta?.detail_1?.url;
-                if (url) rawContent = url; // 如果成功提取，就用URL覆盖原始内容
+                if (url) {
+                    contentToParse = url; // 成功提取URL，用它覆盖原始内容
+                }
             } catch (err) { /* 解析失败则忽略，继续使用原始内容 */ }
         }
 
-        // 2. 检查处理后的内容是否真的包含B站特征
-        if (!/(bilibili\.com|b23\.tv|^BV[1-9a-zA-Z]{10}$|^av[0-9]+)/.test(rawContent)) {
-            return false; // 如果经过处理后，内容里没有B站链接了，说明是误判，不处理
+        // 【修正】用一个更包容的正则来初步判断是否需要处理
+        if (!/bilibili\.com|b23\.tv|BV[1-9a-zA-Z]{10}|av[0-9]+/i.test(contentToParse)) {
+            return false;
         }
 
         try {
-            const normalizedUrl = await this.normalizeUrl(rawContent);
+            // 将可能包含干扰文本的内容传入，由normalizeUrl精确提取
+            const normalizedUrl = await this.normalizeUrl(contentToParse);
             
             if (normalizedUrl.includes("live.bilibili.com")) await this.handleLive(e, normalizedUrl);
             else if (normalizedUrl.includes("t.bilibili.com") || normalizedUrl.includes("bilibili.com/opus")) await this.handleDynamic(e, normalizedUrl);
@@ -73,12 +76,49 @@ export class BilibiliParser extends plugin {
             else await this.handleVideo(e, normalizedUrl);
 
         } catch (error) { 
-            // 不再向用户发送错误，只在日志中记录，避免刷屏
-            logger.warn(`[荷花插件][B站] ${error.message}`); 
+            logger.warn(`[荷花插件][B站] 解析失败: ${error.message}`); 
             return false;
         }
         return true;
     }
+
+    async normalizeUrl(input) {
+        // 【修正】使用更强大的正则，从任意文本中提取出第一个B站相关链接或ID
+        const urlMatch = input.match(/(https?:\/\/(www\.bilibili\.com\/video\/[a-zA-Z0-9]+|b23\.tv\/[a-zA-Z0-9]+|www\.bilibili\.com\/read\/cv[0-9]+|t\.bilibili\.com\/\d+|live\.bilibili\.com\/\d+)[^\s]*)/);
+        const bvMatch = input.match(/(BV[1-9a-zA-Z]{10})/);
+        const avMatch = input.match(/(av[0-9]+)/);
+
+        let url;
+
+        if (urlMatch) {
+            url = urlMatch[0];
+        } else if (bvMatch) {
+            url = `https://www.bilibili.com/video/${bvMatch[0]}`;
+        } else if (avMatch) {
+            url = `https://www.bilibili.com/video/${avMatch[0]}`;
+        } else {
+            throw new Error("无法从消息中提取有效的B站链接或ID");
+        }
+
+        if (url.includes("b23.tv")) {
+             try {
+                const resp = await fetch(url, {
+                    method: 'GET',
+                    redirect: 'follow',
+                    headers: { 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.3 Mobile/15E148 Safari/604.1' }
+                });
+                return resp.url;
+            } catch (err) {
+                logger.error(`[荷花插件][B站] 展开短链失败:`, err);
+                throw new Error("展开B站短链失败");
+            }
+        }
+        
+        if (!url.startsWith("http")) url = "https://" + url;
+        
+        return url;
+    }
+    
     async handleVideo(e, url) {
         const videoInfo = await this.getVideoInfo(url);
         if (!videoInfo) throw new Error("未能获取到视频信息");
@@ -280,46 +320,6 @@ export class BilibiliParser extends plugin {
         } finally {
             if (fs.existsSync(tempPath)) fs.rm(tempPath, { recursive: true, force: true }, () => {});
         }
-    }
-    
-    async normalizeUrl(input) {
-        logger.debug(`[荷花插件-B站调试] 进入normalizeUrl函数，输入: ${input}`);
-        
-        const match = input.match(/https?:\/\/(www\.bilibili\.com\/video\/[a-zA-Z0-9]+|b23\.tv\/[a-zA-Z0-9]+|www\.bilibili\.com\/read\/cv[0-9]+|t\.bilibili\.com\/\d+|live\.bilibili\.com\/\d+)[^\s]*/);
-        let url;
-
-        if (match) {
-            url = match[0];
-            logger.debug(`[荷花插件-B站调试] 从输入中正则匹配到URL: ${url}`);
-        } else if (/(^BV[1-9a-zA-Z]{10}$)|(^av[0-9]+$)/.test(input)) {
-            url = `https://www.bilibili.com/video/${input}`;
-            logger.debug(`[荷花插件-B站调试] 识别为独立ID，构造URL: ${url}`);
-            return url;
-        } else {
-            throw new Error("无法识别的链接格式");
-        }
-
-        if (url.includes("b23.tv")) {
-            logger.debug(`[荷花插件-B站调试] 检测到b23.tv短链，开始展开...`);
-             try {
-                const resp = await fetch(url, {
-                    method: 'GET', // 使用GET而不是HEAD，有些服务器对HEAD的响应不完整
-                    redirect: 'follow',
-                    headers: {
-                        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.3 Mobile/15E148 Safari/604.1'
-                    }
-                });
-                logger.info(`[荷花插件][B站] 短链 ${url} 已成功展开为: ${resp.url}`);
-                return resp.url;
-            } catch (err) {
-                logger.error(`[荷花插件][B站] 展开短链失败:`, err);
-                throw new Error("展开B站短链失败");
-            }
-        }
-        
-        if (!url.startsWith("http")) url = "https://" + url;
-        
-        return url;
     }
     
     async getVideoInfo(url) {
