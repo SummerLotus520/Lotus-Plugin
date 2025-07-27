@@ -4,7 +4,7 @@ bilibili:
   sessData: ""
   
   # [核心配置] 是否优先使用 BBDown 进行下载 (需要服务器已安装BBDown)。
-  # 启用后，可解析会员内容，且下面的清晰度选项更强大。
+  # 启用后，可解析会员内容，且更可靠。
   useBBDown: true
   
   # [BBDown专属] 使用BBDown时，是否调用aria2c进行加速 (需要服务器已安装aria2c)。
@@ -12,7 +12,7 @@ bilibili:
   
   # [核心配置] 默认下载画质。对BBDown和API模式都有效。
   # 120: 4K, 116: 1080P60, 112: 1080P高码率, 80: 1080P, 74: 720P60, 64: 720P, 32: 480P, 16: 360P
-  resolution: 80
+  resolution: 64
   
   # [核心配置] 视频时长限制（秒），超过则只发信息不发视频。
   durationLimit: 3600
