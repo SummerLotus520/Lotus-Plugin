@@ -35,55 +35,37 @@ export class BilibiliParser extends plugin {
             event: 'message',
             priority: 4100,
             rule: [
-                { reg: '(bilibili.com|b23.tv|^BV[1-9a-zA-Z]{10}$|^av[0-9]+$)', fnc: 'parse' },
+                {
+                    reg: 'bilibili.com|b23.tv|BV|av',
+                    fnc: 'parse'
+                },
                 { reg: '^#B站登录$', fnc: 'login', permission: 'master' }
             ]
         });
-
         if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
     }
-
+    
     async parse(e) {
-        logger.debug('[荷花插件-B站调试] 收到消息，进入parse函数。');
-        let rawContent;
+        let rawContent = e.msg || "";
 
-        if (e.msg && e.msg.startsWith('[CQ:json,data=')) {
-            logger.debug('[荷花插件-B站调试] 检测到CQ码JSON消息。');
+        // 1. 优先处理CQ码JSON
+        if (rawContent.startsWith('[CQ:json,data=')) {
             try {
-                let jsonData = e.msg.substring('[CQ:json,data='.length, e.msg.length - 1);
+                let jsonData = rawContent.substring('[CQ:json,data='.length, rawContent.length - 1);
                 jsonData = jsonData.replace(/,/g, ',').replace(/[/g, '[').replace(/]/g, ']').replace(/&/g, '&');
-                logger.debug(`[荷花插件-B站调试] 反转义后的JSON字符串: ${jsonData}`);
-                
                 const json = JSON.parse(jsonData);
-                const url = json.meta?.detail_1?.qqdocurl 
-                           || json.meta?.news?.jumpUrl 
-                           || json.meta?.detail_1?.url;
-                
-                logger.debug(`[荷花插件-B站调试] 从JSON中提取的URL: ${url}`);
-                
-                if (url && /(bilibili\.com|b23\.tv)/.test(url)) {
-                    rawContent = url;
-                } else {
-                    logger.debug('[荷花插件-B站调试] JSON卡片不是B站相关，已忽略。');
-                    return false;
-                }
-            } catch (err) {
-                logger.warn(`[荷花插件-B站调试] 解析JSON卡片失败: ${err.message}`);
-                return false; 
-            }
-        } else {
-            rawContent = e.msg?.trim();
-            logger.debug(`[荷花插件-B站调试] 识别为普通文本消息: ${rawContent}`);
+                const url = json.meta?.detail_1?.qqdocurl || json.meta?.news?.jumpUrl || json.meta?.detail_1?.url;
+                if (url) rawContent = url; // 如果成功提取，就用URL覆盖原始内容
+            } catch (err) { /* 解析失败则忽略，继续使用原始内容 */ }
         }
 
-        if (!rawContent || !/(bilibili\.com|b23\.tv|^BV[1-9a-zA-Z]{10}$|^av[0-9]+$)/.test(rawContent)) {
-            logger.debug('[荷花插件-B站调试] 初步检测内容不含B站特征，已忽略。');
-            return false;
+        // 2. 检查处理后的内容是否真的包含B站特征
+        if (!/(bilibili\.com|b23\.tv|^BV[1-9a-zA-Z]{10}$|^av[0-9]+)/.test(rawContent)) {
+            return false; // 如果经过处理后，内容里没有B站链接了，说明是误判，不处理
         }
 
         try {
             const normalizedUrl = await this.normalizeUrl(rawContent);
-            logger.debug(`[荷花插件-B站调试] 规范化后的URL: ${normalizedUrl}`);
             
             if (normalizedUrl.includes("live.bilibili.com")) await this.handleLive(e, normalizedUrl);
             else if (normalizedUrl.includes("t.bilibili.com") || normalizedUrl.includes("bilibili.com/opus")) await this.handleDynamic(e, normalizedUrl);
@@ -91,14 +73,12 @@ export class BilibiliParser extends plugin {
             else await this.handleVideo(e, normalizedUrl);
 
         } catch (error) { 
-            logger.error(`[荷花插件-B站调试] 最终处理失败:`, error); 
-            // 将原始的警告信息发送给用户，方便调试
-            e.reply(`B站解析失败: ${error.message}`);
+            // 不再向用户发送错误，只在日志中记录，避免刷屏
+            logger.warn(`[荷花插件][B站] ${error.message}`); 
             return false;
         }
         return true;
     }
-
     async handleVideo(e, url) {
         const videoInfo = await this.getVideoInfo(url);
         if (!videoInfo) throw new Error("未能获取到视频信息");
