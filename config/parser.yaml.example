@@ -15,7 +15,7 @@ bilibili:
   resolution: 80
   
   # [核心配置] 视频时长限制（秒），超过则只发信息不发视频。
-  durationLimit: 600
+  durationLimit: 3600
   
 # ---------------- 网易云音乐配置 ----------------
 netease:
@@ -24,7 +24,7 @@ netease:
 
   # [核心配置] 自建NeteaseCloudMusicApi的地址，如果留空，则使用公共API。
   # 例如: "http://127.0.0.1:3000"
-  localApiUrl: ""
+  localApiUrl: "http://127.0.0.1:3000"
   
   # [核心配置] 解析音质。
   # 可选值: standard, higher, exhigh, lossless, hires, jymaster
@@ -54,4 +54,4 @@ general:
   identifyPrefix: "[荷花解析]"
   
   # 视频文件大小限制（单位MB），超过此大小将转为上传群文件
-  videoSizeLimit: 128
+  videoSizeLimit: 100
