@@ -11,7 +11,7 @@ export class allDaily extends plugin {
       name: '[荷花插件] 全部体力',
       dsc: '触发 #体力、*体力、%体力',
       event: 'message',
-      priority: 10,
+      priority: 0,
       rule: [
         {
           reg: '^(!体力|全部体力|#全部体力)$',

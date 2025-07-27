@@ -9,7 +9,7 @@ export class HhCustomExecute extends plugin {
 			name: "[荷花插件] 自定义执行",
 			dsc: "通过指令模拟指定用户在指定场景执行命令",
 			event: "message",
-			priority: 50,
+			priority: 0,
 			rule: [
 				{
 					reg: "^#execute",
