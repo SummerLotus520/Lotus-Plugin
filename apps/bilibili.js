@@ -39,26 +39,23 @@ export class BilibiliParser extends plugin {
         if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
     }
 
-    // --- 修改点 ---: 采用最直接的正则表达式直接从原始消息中暴力提取URL
+    // --- 修改点 ---: 采用“先净化，再提取”的终极方案
     async parse(e) {
         const rawMsg = e.raw_message || e.msg || "";
 
-        // 定义一个能匹配B站各种域名和ID的暴力正则表达式
-        const violentRegex = /(https?:\/\/(?:www\.bilibili\.com|b23\.tv|t\.bilibili\.com)[^\s"'<,\]}]+)|(BV[1-9a-zA-Z]{10})/i;
-        const match = rawMsg.match(violentRegex);
+        // 步骤一：净化！将所有转义斜杠 `\/` 替换回 `/`
+        // `g` 标志确保替换所有匹配项
+        const cleanMsg = rawMsg.replace(/\\\//g, '/');
 
-        let contentToParse = '';
-
-        if (match) {
-            // 如果匹配成功，无论原消息多乱，我们只取第一个匹配到的干净内容
-            // match[1] 是URL，match[2]是BV号，取其中一个不为空的
-            contentToParse = match[1] || match[2];
-            // 清理一下可能混入的HTML实体
-            contentToParse = contentToParse.replace(/&/g, '&');
-        } else {
-            // 如果连最暴力的正则都找不到，那说明真的没有，直接退出
+        // 步骤二：在净化后的字符串上进行精准提取
+        const surgicalRegex = /(https?:\/\/(?:www\.bilibili\.com\/video\/[a-zA-Z0-9]+|b23\.tv\/[a-zA-Z0-9]+|live\.bilibili\.com\/\d+))|(BV[1-9a-zA-Z]{10})/i;
+        const match = cleanMsg.match(surgicalRegex);
+        
+        if (!match) {
             return false;
         }
+
+        const contentToParse = match[1] || match[2];
 
         try {
             const normalizedUrl = await this.normalizeUrl(contentToParse);
@@ -230,19 +227,16 @@ export class BilibiliParser extends plugin {
     }
     
     async normalizeUrl(input) {
-        // 如果输入本身已经是标准链接，直接返回
-        if (input.startsWith('https://www.bilibili.com/video/')) {
+        if (input.startsWith('https://www.bilibili.com/video/') || input.startsWith('https://live.bilibili.com/')) {
             return input;
         }
 
-        // 如果输入是BV/av号，构造成标准链接
         const idMatch = input.match(/(BV[1-9a-zA-Z]{10})/i) || input.match(/(av[0-9]+)/i);
         if (idMatch) {
             return `https://www.bilibili.com/video/${idMatch[0]}`;
         }
         
-        // 如果输入是短链等，尝试展开
-        const shortUrlMatch = input.match(/https?:\/\/(b23\.tv|bili2233\.cn)\/[^\s]+/);
+        const shortUrlMatch = input.match(/https?:\/\/b23\.tv\/[a-zA-Z0-9]+/);
         if (shortUrlMatch) {
             try {
                 const resp = await fetch(shortUrlMatch[0], { method: 'HEAD', redirect: 'follow' });
