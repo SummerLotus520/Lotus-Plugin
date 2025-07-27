@@ -39,31 +39,34 @@ export class BilibiliParser extends plugin {
         if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
     }
 
-    // --- 修改点 ---: 采用更健壮的正则提取方式来处理JSON卡片
+    // --- 修改点 ---: 重构了解析逻辑，使其更健壮
     async parse(e) {
-        // 优先使用e.raw_message，它通常包含最原始、未经处理的信息
-        let content = e.raw_message || e.msg || "";
-        let extractedUrl = "";
+        const rawMsg = e.raw_message || e.msg || "";
+        let contentToParse = '';
 
-        // 如果是JSON卡片，直接用正则提取url，这比完整的JSON.parse更稳定
-        if (content.startsWith('[CQ:json,data=')) {
-            const urlMatch = content.match(/"qqdocurl":"(https?:\/\/[\s\S]+?)"/);
+        // 检查是否为JSON卡片
+        if (rawMsg.startsWith('[CQ:json,data=')) {
+            // 从卡片中用正则提取URL，这种方法对转义字符有更好的抵抗力
+            const urlMatch = rawMsg.match(/"qqdocurl":"(https?:\/\/[^"]+)"/);
             if (urlMatch && urlMatch[1]) {
-                // 提取出URL并去除可能存在的转义反斜杠
-                extractedUrl = urlMatch[1].replace(/\\/g, ''); 
+                // 成功提取，去除可能存在的转义反斜杠
+                contentToParse = urlMatch[1].replace(/\\/g, '');
+            } else {
+                // 是JSON卡片，但没有找到B站链接，判定为无关消息，静默退出
+                return false;
             }
+        } else {
+            // 不是JSON卡片，直接使用原始消息
+            contentToParse = rawMsg;
         }
-        
-        // 决定最终要处理的内容：优先使用提取出的URL，否则使用原始消息
-        const targetContent = extractedUrl || content;
-        
-        // 使用最终内容进行关键词过滤
-        if (!/(bilibili\.com|b23\.tv|^BV[1-9a-zA-Z]{10}$|^av[0-9]+)/i.test(targetContent)) {
+
+        // 只有在获取到有效内容后，才进行关键词匹配
+        if (!/(bilibili\.com|b23\.tv|^BV[1-9a-zA-Z]{10}$|^av[0-9]+)/i.test(contentToParse)) {
             return false;
         }
 
         try {
-            const normalizedUrl = await this.normalizeUrl(targetContent);
+            const normalizedUrl = await this.normalizeUrl(contentToParse);
             if (normalizedUrl.includes("live.bilibili.com")) {
                 await this.handleLive(e, normalizedUrl);
             } else if (normalizedUrl.includes("/video/")) {
@@ -72,8 +75,8 @@ export class BilibiliParser extends plugin {
                 return false;
             }
         } catch (error) {
-            // 只要不是明确的解析成功，都静默失败，避免打扰
-            // logger.warn(`[荷花插件][B站] 解析失败: ${error.message}`);
+            // 任何后续的错误都认定为解析失败，静默退出以避免骚扰
+            // logger.warn(`[荷花插件][B站] 解析步骤失败: ${error.message}`);
             return false;
         }
         return true;
@@ -137,7 +140,7 @@ export class BilibiliParser extends plugin {
             return e.reply("未找到BBDown.exe，请主人安装并配置好环境变量，或在parser.yaml中配置toolsPath后重试。");
         }
         
-        const qrcodePath = path.join(configDir, 'qrcode.png');
+        const qrcodePath = path.join(configDir, 'bbdown_qrcode.png');
         if (fs.existsSync(qrcodePath)) fs.unlinkSync(qrcodePath);
 
         await e.reply("正在启动BBDown登录进程，请稍候...");
