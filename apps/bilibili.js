@@ -2,10 +2,9 @@ import plugin from '../../../lib/plugins/plugin.js';
 import fetch from 'node-fetch';
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'child_process';
+import { spawn } from 'child_process'; 
 import ConfigLoader from '../model/config_loader.js';
 
-// --- 路径和常量 ---
 const pluginRoot = path.resolve(process.cwd(), 'plugins', 'Lotus-Plugin');
 const dataDir = path.join(pluginRoot, 'data', 'bilibili');
 const configDir = path.join(pluginRoot, 'config');
@@ -29,7 +28,10 @@ export class BilibiliParser extends plugin {
             event: 'message',
             priority: 4100,
             rule: [
-                { reg: 'bilibili.com|b23.tv|^BV[1-9a-zA-Z]{10}$|^av[0-9]+', fnc: 'parse' },
+                {
+                    reg: '(bilibili.com|b23.tv|bili2233.cn|t.bilibili.com|^BV[1-9a-zA-Z]{10}$)',
+                    fnc: 'parse'
+                },
                 { reg: '^#B站登录$', fnc: 'login', permission: 'master' }
             ]
         });
@@ -37,23 +39,35 @@ export class BilibiliParser extends plugin {
     }
 
     async parse(e) {
-        let rawContent = e.msg || "";
-        if (rawContent.startsWith('[CQ:json,data=')) {
-            try {
-                let jsonData = rawContent.substring('[CQ:json,data='.length, rawContent.length - 1);
-                jsonData = jsonData.replace(/,/g, ',').replace(/[/g, '[').replace(/]/g, ']').replace(/&/g, '&');
-                const json = JSON.parse(jsonData);
-                const url = json.meta?.detail_1?.qqdocurl || json.meta?.news?.jumpUrl || json.meta?.detail_1?.url;
-                if (url) rawContent = url;
-            } catch (err) { /* ignore */ }
+        let content = "";
+        if (e.msg) {
+            content = e.msg;
+        } else if (e.raw_message) {
+            content = e.raw_message;
+        } else if (e.message && typeof e.message?.[0]?.data === 'string') {
+            content = e.message[0].data.replaceAll("\\", "");
         }
 
-        if (!/(bilibili\.com|b23\.tv|^BV[1-9a-zA-Z]{10}$|^av[0-9]+)/i.test(rawContent)) {
+        if (content.startsWith('[CQ:json,data=')) {
+            try {
+                let jsonDataStr = content.substring('[CQ:json,data='.length, content.length - 1);
+                jsonDataStr = jsonDataStr.replace(/,/g, ',').replace(/&/g, '&').replace(/[/g, '[').replace(/]/g, ']');
+                const jsonData = JSON.parse(jsonDataStr);
+                const extractedUrl = jsonData.meta?.detail_1?.qqdocurl || jsonData.meta?.news?.jumpUrl || jsonData.meta?.detail_1?.url;
+                if (extractedUrl) {
+                    content = extractedUrl;
+                }
+            } catch (err) {
+                logger.warn(`[荷花插件][B站] JSON卡片解析失败: ${err.message}`);
+            }
+        }
+
+        if (!/(bilibili\.com|b23\.tv|^BV[1-9a-zA-Z]{10}$|^av[0-9]+)/i.test(content)) {
             return false;
         }
 
         try {
-            const normalizedUrl = await this.normalizeUrl(rawContent);
+            const normalizedUrl = await this.normalizeUrl(content);
             if (normalizedUrl.includes("live.bilibili.com")) {
                 await this.handleLive(e, normalizedUrl);
             } else if (normalizedUrl.includes("/video/")) {
@@ -67,6 +81,7 @@ export class BilibiliParser extends plugin {
         }
         return true;
     }
+
 
     async handleVideo(e, url) {
         const videoInfo = await this.getVideoInfo(url);
@@ -221,22 +236,31 @@ export class BilibiliParser extends plugin {
     }
     
     async normalizeUrl(input) {
-        const match = input.match(/https?:\/\/[^\s]+/);
-        if (!match) {
-            if (/(^BV[1-9a-zA-Z]{10}$)|(^av[0-9]+$)/.test(input)) return `https://www.bilibili.com/video/${input}`;
-            throw new Error("无法识别的链接格式");
+        // 匹配BV/av号并直接构造成标准链接
+        const idMatch = input.match(/(BV[1-9a-zA-Z]{10})/i) || input.match(/(av[0-9]+)/i);
+        if (idMatch) {
+            return `https://www.bilibili.com/video/${idMatch[0]}`;
         }
-        let url = match[0];
-        if (url.includes("b23.tv")) {
-             try {
-                const resp = await fetch(url, { method: 'HEAD', redirect: 'follow' });
+        
+        // 匹配短链接
+        const shortUrlMatch = input.match(/https?:\/\/(b23\.tv|bili2233\.cn)\/[^\s]+/);
+        if (shortUrlMatch) {
+            try {
+                const resp = await fetch(shortUrlMatch[0], { method: 'HEAD', redirect: 'follow' });
                 return resp.url;
             } catch (err) {
                 logger.error(`[荷花插件][B站] 短链展开失败: ${err.message}`);
                 throw new Error("展开B站短链失败");
             }
         }
-        return url;
+        
+        // 匹配标准长链接
+        const longUrlMatch = input.match(/https?:\/\/www\.bilibili\.com\/[^\s]+/);
+        if (longUrlMatch) {
+            return longUrlMatch[0];
+        }
+
+        throw new Error("无法识别的链接格式");
     }
     
     async getVideoInfo(url) {
@@ -350,9 +374,28 @@ export class BilibiliParser extends plugin {
             const cmdPath = path.join(cfg.external_tools.toolsPath, exe);
             if (fs.existsSync(cmdPath)) return cmdPath;
         }
+
         return new Promise((resolve) => {
-            const check = process.platform === 'win32' ? `where ${command}` : `which ${command}`;
-            exec(check, (error, stdout) => resolve(error ? null : stdout.trim().split('\n')[0]));
+            const checkCmd = process.platform === 'win32' ? 'where' : 'which';
+            const child = spawn(checkCmd, [command]);
+            let output = '';
+
+            child.stdout.on('data', (data) => {
+                output += data.toString();
+            });
+
+            child.on('close', (code) => {
+                if (code === 0 && output) {
+                    resolve(output.trim().split('\n')[0]);
+                } else {
+                    resolve(null);
+                }
+            });
+
+            child.on('error', (err) => {
+                logger.warn(`[荷花插件][环境检查] 执行 ${checkCmd} 失败: ${err.message}`);
+                resolve(null);
+            });
         });
     }
 
