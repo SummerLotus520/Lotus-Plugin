@@ -2,9 +2,10 @@ import plugin from '../../../lib/plugins/plugin.js';
 import fetch from 'node-fetch';
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'child_process'; 
+import { spawn } from 'child_process';
 import ConfigLoader from '../model/config_loader.js';
 
+// --- 路径和常量 ---
 const pluginRoot = path.resolve(process.cwd(), 'plugins', 'Lotus-Plugin');
 const dataDir = path.join(pluginRoot, 'data', 'bilibili');
 const configDir = path.join(pluginRoot, 'config');
@@ -38,36 +39,31 @@ export class BilibiliParser extends plugin {
         if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
     }
 
+    // --- 修改点 ---: 采用更健壮的正则提取方式来处理JSON卡片
     async parse(e) {
-        let content = "";
-        if (e.msg) {
-            content = e.msg;
-        } else if (e.raw_message) {
-            content = e.raw_message;
-        } else if (e.message && typeof e.message?.[0]?.data === 'string') {
-            content = e.message[0].data.replaceAll("\\", "");
-        }
+        // 优先使用e.raw_message，它通常包含最原始、未经处理的信息
+        let content = e.raw_message || e.msg || "";
+        let extractedUrl = "";
 
+        // 如果是JSON卡片，直接用正则提取url，这比完整的JSON.parse更稳定
         if (content.startsWith('[CQ:json,data=')) {
-            try {
-                let jsonDataStr = content.substring('[CQ:json,data='.length, content.length - 1);
-                jsonDataStr = jsonDataStr.replace(/,/g, ',').replace(/&/g, '&').replace(/[/g, '[').replace(/]/g, ']');
-                const jsonData = JSON.parse(jsonDataStr);
-                const extractedUrl = jsonData.meta?.detail_1?.qqdocurl || jsonData.meta?.news?.jumpUrl || jsonData.meta?.detail_1?.url;
-                if (extractedUrl) {
-                    content = extractedUrl;
-                }
-            } catch (err) {
-                logger.warn(`[荷花插件][B站] JSON卡片解析失败: ${err.message}`);
+            const urlMatch = content.match(/"qqdocurl":"(https?:\/\/[\s\S]+?)"/);
+            if (urlMatch && urlMatch[1]) {
+                // 提取出URL并去除可能存在的转义反斜杠
+                extractedUrl = urlMatch[1].replace(/\\/g, ''); 
             }
         }
-
-        if (!/(bilibili\.com|b23\.tv|^BV[1-9a-zA-Z]{10}$|^av[0-9]+)/i.test(content)) {
+        
+        // 决定最终要处理的内容：优先使用提取出的URL，否则使用原始消息
+        const targetContent = extractedUrl || content;
+        
+        // 使用最终内容进行关键词过滤
+        if (!/(bilibili\.com|b23\.tv|^BV[1-9a-zA-Z]{10}$|^av[0-9]+)/i.test(targetContent)) {
             return false;
         }
 
         try {
-            const normalizedUrl = await this.normalizeUrl(content);
+            const normalizedUrl = await this.normalizeUrl(targetContent);
             if (normalizedUrl.includes("live.bilibili.com")) {
                 await this.handleLive(e, normalizedUrl);
             } else if (normalizedUrl.includes("/video/")) {
@@ -76,7 +72,8 @@ export class BilibiliParser extends plugin {
                 return false;
             }
         } catch (error) {
-            logger.warn(`[荷花插件][B站] 解析失败: ${error.message}`);
+            // 只要不是明确的解析成功，都静默失败，避免打扰
+            // logger.warn(`[荷花插件][B站] 解析失败: ${error.message}`);
             return false;
         }
         return true;
@@ -140,7 +137,7 @@ export class BilibiliParser extends plugin {
             return e.reply("未找到BBDown.exe，请主人安装并配置好环境变量，或在parser.yaml中配置toolsPath后重试。");
         }
         
-        const qrcodePath = path.join(configDir, 'bbdown_qrcode.png');
+        const qrcodePath = path.join(configDir, 'qrcode.png');
         if (fs.existsSync(qrcodePath)) fs.unlinkSync(qrcodePath);
 
         await e.reply("正在启动BBDown登录进程，请稍候...");
@@ -236,13 +233,11 @@ export class BilibiliParser extends plugin {
     }
     
     async normalizeUrl(input) {
-        // 匹配BV/av号并直接构造成标准链接
         const idMatch = input.match(/(BV[1-9a-zA-Z]{10})/i) || input.match(/(av[0-9]+)/i);
         if (idMatch) {
             return `https://www.bilibili.com/video/${idMatch[0]}`;
         }
         
-        // 匹配短链接
         const shortUrlMatch = input.match(/https?:\/\/(b23\.tv|bili2233\.cn)\/[^\s]+/);
         if (shortUrlMatch) {
             try {
@@ -254,7 +249,6 @@ export class BilibiliParser extends plugin {
             }
         }
         
-        // 匹配标准长链接
         const longUrlMatch = input.match(/https?:\/\/www\.bilibili\.com\/[^\s]+/);
         if (longUrlMatch) {
             return longUrlMatch[0];
