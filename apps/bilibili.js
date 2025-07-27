@@ -490,7 +490,17 @@ export class BilibiliParser extends plugin {
         const cfg = ConfigLoader.cfg;
         const bbdownPath = await this.findCommandPath('BBDown');
         if (!bbdownPath) throw new Error("未找到BBDown，请检查环境配置");
-
+        const resolutionMap = {
+            120: '8K 超高清',
+            116: '1080P 60帧',
+            112: '1080P 高码率',
+            80: '1080P 高清',
+            74: '720P 60帧',
+            64: '720P 高清', 
+            32: '480P 清晰',
+            16: '360P 流畅',
+        };
+        const dfnPriority = resolutionMap[cfg.bilibili.resolution] || String(cfg.bilibili.resolution);
         const args = [url];
         if (cfg.bilibili.useAria2) args.push('--use-aria2c');
         
@@ -499,7 +509,7 @@ export class BilibiliParser extends plugin {
              args.push('-c', `SESSDATA=${sessdata}`);
         }
         if (pageNum) args.push('-p', String(pageNum));
-        args.push('--dfn-priority', String(cfg.bilibili.resolution));
+        args.push('--dfn-priority', dfnPriority);
         if(extraArgsStr) args.push(...extraArgsStr.split(' '));
         args.push('--work-dir', cwd);
 
