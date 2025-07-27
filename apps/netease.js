@@ -2,19 +2,17 @@ import plugin from '../../../lib/plugins/plugin.js';
 import fetch from 'node-fetch';
 import fs from 'node:fs';
 import path from 'node:path';
-import { exec, execFile } from 'child_process';
+import { exec } from 'child_process';
 import YAML from 'yaml';
 import axios from 'axios';
 import qrcode from "qrcode";
 import ConfigLoader from '../model/config_loader.js';
 
-// --- 路径和常量 ---
 const pluginRoot = path.resolve(process.cwd(), 'plugins', 'Lotus-Plugin');
 const dataDir = path.join(pluginRoot, 'data', 'netease');
 const configDir = path.join(pluginRoot, 'config');
 const configPath = path.join(configDir, 'parser.yaml');
 const redisSongKey = "lotus:parser:netease_song_list:";
-const NETEASE_PUBLIC_API = "https://neteasecloudmusicapi.vercel.app";
 
 const COMMON_HEADER = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36'
@@ -38,11 +36,19 @@ export class NeteaseParser extends plugin {
         });
 
         if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-        this.neteaseApi = ConfigLoader.cfg.netease.localApiUrl || NETEASE_PUBLIC_API;
+        
+        this.neteaseApi = ConfigLoader.cfg.netease.localApiUrl;
+        if (!this.neteaseApi) {
+            logger.warn('[荷花插件][网易云] 警告：未在 config/parser.yaml 中配置自建API地址 (localApiUrl)，相关功能将无法使用。');
+        }
     }
 
     getNeteaseApi() {
-        return ConfigLoader.cfg.netease.localApiUrl || NETEASE_PUBLIC_API;
+        const apiUrl = ConfigLoader.cfg.netease.localApiUrl;
+        if (!apiUrl) {
+            throw new Error("功能未启用：请联系机器人管理员配置自建网易云API。");
+        }
+        return apiUrl;
     }
 
     async parse(e) {
@@ -55,7 +61,7 @@ export class NeteaseParser extends plugin {
             if (url.includes('/mv?')) {
                 await this.handleMv(e, id);
             } else {
-                await this.handleSong(e, id, false); // 直接发链接，isFromRequest=false
+                await this.handleSong(e, id, false);
             }
         } catch (error) {
             logger.error(`[荷花插件][网易云] 失败:`, error);
@@ -104,7 +110,7 @@ export class NeteaseParser extends plugin {
         if (index < 0 || index >= songList.length) return e.reply("序号选择无效。");
         
         const song = songList[index];
-        await this.handleSong(e, song.id, true); // 点歌播放，isFromRequest=true
+        await this.handleSong(e, song.id, true);
         return true;
     }
 
@@ -115,7 +121,7 @@ export class NeteaseParser extends plugin {
             const resp = await axios.get(searchUrl, { headers: { Cookie: ConfigLoader.cfg.netease.cookie } });
             const song = resp.data.result?.songs?.[0];
             if (!song) return e.reply(`未能找到与“${keyword}”相关的歌曲。`);
-            await this.handleSong(e, song.id, true); // 点歌播放，isFromRequest=true
+            await this.handleSong(e, song.id, true);
         } catch (error) {
              logger.error(`[荷花插件][播放] 失败:`, error);
              await e.reply(`播放失败: ${error.message}`);
@@ -141,29 +147,35 @@ export class NeteaseParser extends plugin {
         
         const songName = songData.name;
         const artistName = songData.ar.map(a => a.name).join('/');
-        const info = [
-            segment.image(songData.al.picUrl),
+        
+        const textInfo = [
             `${cfg.general.identifyPrefix} 网易云音乐`,
             `歌曲: ${songName}`,
             `歌手: ${artistName}`,
             `音质: ${songUrlData.level}`,
             `大小: ${(songUrlData.size / 1024 / 1024).toFixed(2)} MB`
         ].join('\n');
-        await e.reply(info);
+        
+        if (cfg.netease.sendAlbumArt) {
+            await e.reply([
+                segment.image(songData.al.picUrl),
+                textInfo
+            ]);
+        } else {
+            await e.reply(textInfo);
+        }
 
         const safeTitle = `${artistName} - ${songName}`.replace(/[\\/:\*\?"<>\|]/g, '_');
         const tempFile = path.join(dataDir, `${safeTitle}.${songUrlData.type || 'mp3'}`);
         await this.downloadFile(tempFile, songUrlData.url);
         
         if (isFromRequest && cfg.netease.sendAsVoice) {
-            // 转码为amr并发送语音
             const amrFile = tempFile.replace(/\.\w+$/, '.amr');
             await this.convertToAmr(tempFile, amrFile);
             await e.reply(segment.record(amrFile));
             if (fs.existsSync(amrFile)) fs.unlink(amrFile, () => {});
             if (fs.existsSync(tempFile)) fs.unlink(tempFile, () => {});
         } else {
-            // 上传群文件
             await this.uploadFile(e, tempFile, `${safeTitle}.${songUrlData.type || 'mp3'}`);
         }
     }
@@ -199,13 +211,13 @@ export class NeteaseParser extends plugin {
             let interval;
             const poll = async () => {
                 const checkRes = await axios.get(`${api}/login/qr/check?key=${key}×tamp=${Date.now()}`);
-                const { code, cookie, message } = checkRes.data;
+                const { code, cookie } = checkRes.data;
                 if (code === 803) {
                     clearInterval(interval);
                     const cfgToUpdate = YAML.parse(fs.readFileSync(configPath, 'utf8'));
                     cfgToUpdate.netease.cookie = cookie;
                     fs.writeFileSync(configPath, YAML.stringify(cfgToUpdate), 'utf8');
-                    loadConfig(); // 重新加载配置到内存
+                    loadConfig();
                     e.reply("网易云登录成功！Cookie已自动保存到配置文件。");
                 } else if (code === 800) {
                     clearInterval(interval);
@@ -246,24 +258,12 @@ export class NeteaseParser extends plugin {
         return true;
     }
     
-    // --- 工具函数 ---
     async normalizeUrl(input) {
         const match = input.match(/https?:\/\/[^\s]+/);
         if (!match) {
-            if (/(^BV[1-9a-zA-Z]{10}$)|(^av[0-9]+$)/.test(input)) return `https://www.bilibili.com/video/${input}`;
             throw new Error("无法识别的链接格式");
         }
-        let url = match[0];
-        if (url.includes("b23.tv")) {
-             try {
-                const resp = await axios.head(url, { maxRedirects: 5 });
-                return resp.request.res.responseUrl || url;
-            } catch (err) {
-                if (err.request?.res?.responseUrl) return err.request.res.responseUrl;
-                return url;
-            }
-        }
-        return url;
+        return match[0];
     }
     
     async downloadFile(dest, url, headers = COMMON_HEADER) {
@@ -282,7 +282,7 @@ export class NeteaseParser extends plugin {
         try {
             if (e.isGroup && e.group.fs.upload) {
                 await e.group.fs.upload(filePath, e.group.cwd, fileName);
-            } else if (e.isGroup && e.group.sendFile) { // 兼容旧版
+            } else if (e.isGroup && e.group.sendFile) {
                 await e.group.sendFile(filePath);
             } else {
                 await e.reply("当前环境无法上传文件。");
@@ -313,7 +313,10 @@ export class NeteaseParser extends plugin {
         return new Promise((resolve, reject) => {
             const command = `ffmpeg -i "${inputFile}" -ar 8000 -ab 12.2k -ac 1 "${outputFile}"`;
             exec(command, (error, stdout, stderr) => {
-                if (error) { logger.error(`[荷花插件][FFmpeg] 转码AMR失败: ${stderr}`); return reject(new Error("FFmpeg转码AMR失败")); }
+                if (error) { 
+                    logger.error(`[荷花插件][FFmpeg] 转码AMR失败: ${stderr}`); 
+                    return reject(new Error("FFmpeg转码AMR失败"));
+                }
                 resolve();
             });
         });
