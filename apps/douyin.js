@@ -39,15 +39,12 @@ export class DouyinParser extends plugin {
         fs.mkdirSync(tempPath, { recursive: true });
 
         try {
-            // 使用 --print-json 获取所有信息的JSON输出，比多次调用更高效
             const jsonOutput = await this.runYtDlp(url, tempPath, ['--print-json']);
             const videoInfo = JSON.parse(jsonOutput);
 
             const title = videoInfo.title || videoInfo.description || '无标题';
             await e.reply(`${ConfigLoader.cfg.general.identifyPrefix} ${platform}: ${title}`);
             
-            // yt-dlp 会自动将图集下载为图片序列，视频则下载为视频文件
-            // 我们需要重新运行一次yt-dlp进行下载
             await this.runYtDlp(url, tempPath, ['-o', 'output.%(ext)s']);
             
             const files = fs.readdirSync(tempPath);
@@ -55,7 +52,6 @@ export class DouyinParser extends plugin {
             const videoFile = files.find(f => /\.(mp4|mov|mkv|webm)$/i.test(f));
 
             if (imageFiles.length > 0) {
-                // 处理图集
                 const imageMsgs = imageFiles.map(file => ({
                     message: segment.image(path.join(tempPath, file)),
                     nickname: e.sender.card || e.user_id,
@@ -63,7 +59,6 @@ export class DouyinParser extends plugin {
                 }));
                 await e.reply(await Bot.makeForwardMsg(imageMsgs));
             } else if (videoFile) {
-                // 处理视频
                 await this.sendVideo(e, path.join(tempPath, videoFile), `douyin_${videoInfo.id}.mp4`);
             } else {
                 throw new Error("yt-dlp未能成功下载媒体文件。");
@@ -76,7 +71,6 @@ export class DouyinParser extends plugin {
     async normalizeUrl(input) {
         const match = input.match(/https?:\/\/[^\s]+/);
         if (!match) throw new Error("无法识别的链接格式");
-        // yt-dlp可以很好地处理短链，我们直接返回匹配到的URL即可
         return match[0];
     }
 
@@ -87,28 +81,38 @@ export class DouyinParser extends plugin {
             
             const cfg = ConfigLoader.cfg;
             const commandArgs = [url, ...args];
-
-            // 如果配置了Cookie，则通过临时文件传递给 yt-dlp
             let tempCookieFile = null;
             if (cfg.douyin.cookie) {
-                tempCookieFile = path.join(dataDir, `douyin_cookie_${Date.now()}.txt`);
-                // yt-dlp的--cookies参数需要Netscape格式的cookie文件
-                // 我们将简单的Cookie字符串转换为yt-dlp能理解的格式
-                const netscapeCookie = `.douyin.com\tTRUE\t/\tFALSE\t0\t${cfg.douyin.cookie.replace(/=/,'\t')}`;
-                fs.writeFileSync(tempCookieFile, netscapeCookie);
-                commandArgs.push('--cookies', tempCookieFile);
+                try {
+                    tempCookieFile = path.join(dataDir, `douyin_cookie_${Date.now()}.txt`);
+                    
+                    // 将标准的Cookie字符串转换为Netscape格式
+                    const cookiePairs = cfg.douyin.cookie.split('; ');
+                    let netscapeCookies = "# Netscape HTTP Cookie File\n";
+                    cookiePairs.forEach(pair => {
+                        const [name, value] = pair.split(/=(.*)/s); // 分割键和值
+                        if (name && value) {
+                            // 构造Netscape格式的7个字段
+                            // .douyin.com | TRUE | / | FALSE | 0 | name | value
+                            netscapeCookies += `.douyin.com\tTRUE\t/\tFALSE\t0\t${name}\t${value}\n`;
+                        }
+                    });
+                    
+                    fs.writeFileSync(tempCookieFile, netscapeCookies);
+                    commandArgs.push('--cookies', tempCookieFile);
+                } catch (cookieError) {
+                    logger.error(`[荷花插件][抖音] 创建Cookie文件失败:`, cookieError);
+                    // 如果创建失败，就不添加--cookies参数，继续尝试无cookie下载
+                }
             }
             
-            execFile(ytDlpPath, commandArgs, { cwd, timeout: 300000 /*5分钟超时*/ }, (error, stdout, stderr) => {
-                // 清理临时cookie文件
+            execFile(ytDlpPath, commandArgs, { cwd, timeout: 300000 }, (error, stdout, stderr) => {
                 if (tempCookieFile && fs.existsSync(tempCookieFile)) {
                     fs.unlinkSync(tempCookieFile);
                 }
-
                 if (error) {
-                    // 即使有stderr，也要检查是否已成功下载文件（如图集场景）
                     if (fs.readdirSync(cwd).length > 0 && !stdout) {
-                         resolve(stderr.trim()); // 有时成功信息在stderr
+                         resolve(stderr.trim());
                     } else {
                          return reject(new Error(stderr || error.message));
                     }
