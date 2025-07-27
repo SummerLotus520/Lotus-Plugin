@@ -39,29 +39,24 @@ export class BilibiliParser extends plugin {
         if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
     }
 
-    // --- 修改点 ---: 重构了解析逻辑，使其更健壮
+    // --- 修改点 ---: 采用最直接的正则表达式直接从原始消息中暴力提取URL
     async parse(e) {
         const rawMsg = e.raw_message || e.msg || "";
+
+        // 定义一个能匹配B站各种域名和ID的暴力正则表达式
+        const violentRegex = /(https?:\/\/(?:www\.bilibili\.com|b23\.tv|t\.bilibili\.com)[^\s"'<,\]}]+)|(BV[1-9a-zA-Z]{10})/i;
+        const match = rawMsg.match(violentRegex);
+
         let contentToParse = '';
 
-        // 检查是否为JSON卡片
-        if (rawMsg.startsWith('[CQ:json,data=')) {
-            // 从卡片中用正则提取URL，这种方法对转义字符有更好的抵抗力
-            const urlMatch = rawMsg.match(/"qqdocurl":"(https?:\/\/[^"]+)"/);
-            if (urlMatch && urlMatch[1]) {
-                // 成功提取，去除可能存在的转义反斜杠
-                contentToParse = urlMatch[1].replace(/\\/g, '');
-            } else {
-                // 是JSON卡片，但没有找到B站链接，判定为无关消息，静默退出
-                return false;
-            }
+        if (match) {
+            // 如果匹配成功，无论原消息多乱，我们只取第一个匹配到的干净内容
+            // match[1] 是URL，match[2]是BV号，取其中一个不为空的
+            contentToParse = match[1] || match[2];
+            // 清理一下可能混入的HTML实体
+            contentToParse = contentToParse.replace(/&/g, '&');
         } else {
-            // 不是JSON卡片，直接使用原始消息
-            contentToParse = rawMsg;
-        }
-
-        // 只有在获取到有效内容后，才进行关键词匹配
-        if (!/(bilibili\.com|b23\.tv|^BV[1-9a-zA-Z]{10}$|^av[0-9]+)/i.test(contentToParse)) {
+            // 如果连最暴力的正则都找不到，那说明真的没有，直接退出
             return false;
         }
 
@@ -75,7 +70,6 @@ export class BilibiliParser extends plugin {
                 return false;
             }
         } catch (error) {
-            // 任何后续的错误都认定为解析失败，静默退出以避免骚扰
             // logger.warn(`[荷花插件][B站] 解析步骤失败: ${error.message}`);
             return false;
         }
@@ -236,11 +230,18 @@ export class BilibiliParser extends plugin {
     }
     
     async normalizeUrl(input) {
+        // 如果输入本身已经是标准链接，直接返回
+        if (input.startsWith('https://www.bilibili.com/video/')) {
+            return input;
+        }
+
+        // 如果输入是BV/av号，构造成标准链接
         const idMatch = input.match(/(BV[1-9a-zA-Z]{10})/i) || input.match(/(av[0-9]+)/i);
         if (idMatch) {
             return `https://www.bilibili.com/video/${idMatch[0]}`;
         }
         
+        // 如果输入是短链等，尝试展开
         const shortUrlMatch = input.match(/https?:\/\/(b23\.tv|bili2233\.cn)\/[^\s]+/);
         if (shortUrlMatch) {
             try {
@@ -251,13 +252,8 @@ export class BilibiliParser extends plugin {
                 throw new Error("展开B站短链失败");
             }
         }
-        
-        const longUrlMatch = input.match(/https?:\/\/www\.bilibili\.com\/[^\s]+/);
-        if (longUrlMatch) {
-            return longUrlMatch[0];
-        }
 
-        throw new Error("无法识别的链接格式");
+        throw new Error("无法规范化链接格式");
     }
     
     async getVideoInfo(url) {
