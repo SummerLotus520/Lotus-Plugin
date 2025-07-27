@@ -83,14 +83,13 @@ export class BilibiliParser extends plugin {
     }
 
     async normalizeUrl(input) {
-        // 【修正】使用更强大的正则，从任意文本中提取出第一个B站相关链接或ID
-        const urlMatch = input.match(/(https?:\/\/(www\.bilibili\.com\/video\/[a-zA-Z0-9]+|b23\.tv\/[a-zA-Z0-9]+|www\.bilibili\.com\/read\/cv[0-9]+|t\.bilibili\.com\/\d+|live\.bilibili\.com\/\d+)[^\s]*)/);
+        const urlMatch = input.match(/https?:\/\/[a-zA-Z0-9\.\/=\?&%_#-]+/);
         const bvMatch = input.match(/(BV[1-9a-zA-Z]{10})/);
         const avMatch = input.match(/(av[0-9]+)/);
 
         let url;
 
-        if (urlMatch) {
+        if (urlMatch && (urlMatch[0].includes('bilibili.com') || urlMatch[0].includes('b23.tv'))) {
             url = urlMatch[0];
         } else if (bvMatch) {
             url = `https://www.bilibili.com/video/${bvMatch[0]}`;
@@ -102,7 +101,9 @@ export class BilibiliParser extends plugin {
 
         if (url.includes("b23.tv")) {
              try {
-                const resp = await fetch(url, {
+                // 去除链接末尾可能存在的干扰字符，例如"?"后面的跟踪参数有时会导致问题
+                const cleanUrl = url.split('?')[0];
+                const resp = await fetch(cleanUrl, {
                     method: 'GET',
                     redirect: 'follow',
                     headers: { 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.3 Mobile/15E148 Safari/604.1' }
@@ -118,7 +119,7 @@ export class BilibiliParser extends plugin {
         
         return url;
     }
-    
+
     async handleVideo(e, url) {
         const videoInfo = await this.getVideoInfo(url);
         if (!videoInfo) throw new Error("未能获取到视频信息");
