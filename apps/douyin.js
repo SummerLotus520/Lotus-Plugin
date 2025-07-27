@@ -3,7 +3,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { exec, execFile } from 'child_process';
 import ConfigLoader from '../model/config_loader.js';
-import axios from 'axios';
 
 // --- 路径和常量 ---
 const pluginRoot = path.resolve(process.cwd(), 'plugins', 'Lotus-Plugin');
@@ -41,13 +40,16 @@ export class DouyinParser extends plugin {
 
         try {
             // 使用 --print-json 获取所有信息的JSON输出，比多次调用更高效
-            const jsonOutput = await this.runYtDlp(url, tempPath, ['--print-json', '-f', 'b']);
+            const jsonOutput = await this.runYtDlp(url, tempPath, ['--print-json']);
             const videoInfo = JSON.parse(jsonOutput);
 
             const title = videoInfo.title || videoInfo.description || '无标题';
             await e.reply(`${ConfigLoader.cfg.general.identifyPrefix} ${platform}: ${title}`);
             
-            // yt-dlp 会自动将图集下载为图片序列
+            // yt-dlp 会自动将图集下载为图片序列，视频则下载为视频文件
+            // 我们需要重新运行一次yt-dlp进行下载
+            await this.runYtDlp(url, tempPath, ['-o', 'output.%(ext)s']);
+            
             const files = fs.readdirSync(tempPath);
             const imageFiles = files.filter(f => /\.(jpg|jpeg|png|webp)$/i.test(f));
             const videoFile = files.find(f => /\.(mp4|mov|mkv|webm)$/i.test(f));
@@ -64,7 +66,6 @@ export class DouyinParser extends plugin {
                 // 处理视频
                 await this.sendVideo(e, path.join(tempPath, videoFile), `douyin_${videoInfo.id}.mp4`);
             } else {
-                // 如果没有视频和图片，可能是下载失败或yt-dlp未能提取
                 throw new Error("yt-dlp未能成功下载媒体文件。");
             }
         } finally {
@@ -75,10 +76,8 @@ export class DouyinParser extends plugin {
     async normalizeUrl(input) {
         const match = input.match(/https?:\/\/[^\s]+/);
         if (!match) throw new Error("无法识别的链接格式");
-        
-        let url = match[0];
-        // yt-dlp可以很好地处理短链，无需我们手动展开
-        return url;
+        // yt-dlp可以很好地处理短链，我们直接返回匹配到的URL即可
+        return match[0];
     }
 
     runYtDlp(url, cwd, args = []) {
@@ -88,24 +87,28 @@ export class DouyinParser extends plugin {
             
             const cfg = ConfigLoader.cfg;
             const commandArgs = [url, ...args];
-            // 抖音解析通常不需要代理
+
+            // 如果配置了Cookie，则通过临时文件传递给 yt-dlp
+            let tempCookieFile = null;
             if (cfg.douyin.cookie) {
-                commandArgs.push('--cookies-from-browser', 'chrome'); // 示例，让yt-dlp尝试从chrome读取cookie
-                // 或者直接写入临时cookie文件
-                // const tempCookieFile = path.join(dataDir, 'douyin_cookie.txt');
-                // fs.writeFileSync(tempCookieFile, cfg.douyin.cookie);
-                // commandArgs.push('--cookies', tempCookieFile);
+                tempCookieFile = path.join(dataDir, `douyin_cookie_${Date.now()}.txt`);
+                // yt-dlp的--cookies参数需要Netscape格式的cookie文件
+                // 我们将简单的Cookie字符串转换为yt-dlp能理解的格式
+                const netscapeCookie = `.douyin.com\tTRUE\t/\tFALSE\t0\t${cfg.douyin.cookie.replace(/=/,'\t')}`;
+                fs.writeFileSync(tempCookieFile, netscapeCookie);
+                commandArgs.push('--cookies', tempCookieFile);
             }
-
-            // -o 参数指定输出模板，对于yt-dlp来说，它会根据模板自动命名
-            // 如果是图集，它会自动加上序号
-            commandArgs.push('-o', 'output.%(ext)s');
-
+            
             execFile(ytDlpPath, commandArgs, { cwd, timeout: 300000 /*5分钟超时*/ }, (error, stdout, stderr) => {
+                // 清理临时cookie文件
+                if (tempCookieFile && fs.existsSync(tempCookieFile)) {
+                    fs.unlinkSync(tempCookieFile);
+                }
+
                 if (error) {
-                    // yt-dlp下载图集时，即使成功也会在stderr输出一些信息，不能直接作为错误判断
-                    if (fs.readdirSync(cwd).length > 0) {
-                         resolve(stdout.trim());
+                    // 即使有stderr，也要检查是否已成功下载文件（如图集场景）
+                    if (fs.readdirSync(cwd).length > 0 && !stdout) {
+                         resolve(stderr.trim()); // 有时成功信息在stderr
                     } else {
                          return reject(new Error(stderr || error.message));
                     }
@@ -132,10 +135,8 @@ export class DouyinParser extends plugin {
         try {
             if (e.isGroup && e.group.fs.upload) {
                 await e.group.fs.upload(filePath, { name: fileName });
-            } else if (e.isGroup && e.group.sendFile) {
-                await e.group.sendFile(filePath);
             } else {
-                await e.reply("当前环境无法上传文件。");
+                await e.group.sendFile(filePath);
             }
         } finally {
             if (fs.existsSync(filePath)) fs.unlink(filePath, ()=>{});
