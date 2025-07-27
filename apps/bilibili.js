@@ -5,7 +5,6 @@ import path from 'node:path';
 import { spawn } from 'child_process';
 import ConfigLoader from '../model/config_loader.js';
 
-// --- 路径和常量 ---
 const pluginRoot = path.resolve(process.cwd(), 'plugins', 'Lotus-Plugin');
 const dataDir = path.join(pluginRoot, 'data', 'bilibili');
 const configDir = path.join(pluginRoot, 'config');
@@ -39,15 +38,10 @@ export class BilibiliParser extends plugin {
         if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
     }
 
-    // --- 修改点 ---: 采用“先净化，再提取”的终极方案
     async parse(e) {
         const rawMsg = e.raw_message || e.msg || "";
-
-        // 步骤一：净化！将所有转义斜杠 `\/` 替换回 `/`
-        // `g` 标志确保替换所有匹配项
         const cleanMsg = rawMsg.replace(/\\\//g, '/');
 
-        // 步骤二：在净化后的字符串上进行精准提取
         const surgicalRegex = /(https?:\/\/(?:www\.bilibili\.com\/video\/[a-zA-Z0-9]+|b23\.tv\/[a-zA-Z0-9]+|live\.bilibili\.com\/\d+))|(BV[1-9a-zA-Z]{10})/i;
         const match = cleanMsg.match(surgicalRegex);
         
@@ -67,7 +61,6 @@ export class BilibiliParser extends plugin {
                 return false;
             }
         } catch (error) {
-            // logger.warn(`[荷花插件][B站] 解析步骤失败: ${error.message}`);
             return false;
         }
         return true;
@@ -329,8 +322,12 @@ export class BilibiliParser extends plugin {
     async uploadFile(e, filePath, fileName) {
         try {
             if (e.isGroup && e.group.fs.upload) {
-                await e.group.fs.upload(filePath, { name: fileName });
-            } else { await e.group.sendFile(filePath); }
+                await e.group.fs.upload(filePath, e.group.cwd, fileName);
+            } else if (e.group.sendFile) {
+                await e.group.sendFile(filePath);
+            } else {
+                 await e.reply("当前环境无法上传群文件。");
+            }
         } finally {
             if (fs.existsSync(filePath)) fs.unlink(filePath, ()=>{});
         }
