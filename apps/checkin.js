@@ -257,8 +257,14 @@ export class lotusCheckin extends plugin {
             return e.reply('初始化失败，未找到可用的 pip 命令，请检查Python环境或PATH配置。');
         }
 
-        logger.info(`[荷花插件] 使用 "${pipCmd}" 开始初始化...`);
-        const pip = spawn(pipCmd, ['install', '-r', 'requirements.txt'], { cwd: bbsToolsPath, env });
+        const pipArgs = ['install', '-r', 'requirements.txt'];
+        if (process.platform !== 'win32') {
+            pipArgs.push('--break-system-packages');
+            logger.info('[荷花插件] 检测到非Windows环境，为pip自动添加 --break-system-packages 参数以兼容系统包管理策略。');
+        }
+
+        logger.info(`[荷花插件] 使用 "${pipCmd}" 开始初始化，参数: ${pipArgs.join(' ')}`);
+        const pip = spawn(pipCmd, pipArgs, { cwd: bbsToolsPath, env });
 
         pip.stdout.on('data', (data) => logger.info(`[荷花插件][${pipCmd}]: ${data}`));
         pip.stderr.on('data', (data) => logger.error(`[荷花插件][${pipCmd}]: ${data}`));
