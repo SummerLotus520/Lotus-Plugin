@@ -48,6 +48,7 @@ export class lotusCheckin extends plugin {
         
         this.task = null;
         this.refreshTask = null;
+        this.commandsAndEnv = null;
         
         this.checkAndCreateConfig();
         this.runStartupSequence();
@@ -169,25 +170,63 @@ export class lotusCheckin extends plugin {
             logger.error(`[荷花插件] 清理旧日志时发生错误:`, error);
         }
     }
-
-    _findAvailableCommand(commands) {
-        return new Promise(resolve => {
-            const tryNext = (index) => {
-                if (index >= commands.length) {
-                    resolve(null);
-                    return;
-                }
-                const cmd = commands[index];
-                const probe = spawn(cmd, ['--version']);
-                const onEnd = () => resolve(cmd);
-                probe.on('error', () => tryNext(index + 1));
-                probe.on('exit', onEnd);
-                probe.on('close', onEnd);
-            };
-            tryNext(0);
-        });
-    }
     
+    async _getCommandsAndEnv() {
+        if (this.commandsAndEnv) {
+            return this.commandsAndEnv;
+        }
+
+        const osType = process.platform;
+        let pythonCandidates, pipCandidates, env;
+
+        if (osType === 'win32') {
+            pythonCandidates = ['python', 'python3'];
+            pipCandidates = ['pip', 'pip3'];
+            env = process.env;
+        } else {
+            pythonCandidates = ['python3', 'python'];
+            pipCandidates = ['pip3', 'pip'];
+            env = { ...process.env };
+            const standardPaths = [
+                '/usr/local/bin', '/usr/bin', '/bin', '/opt/bin', '/usr/sbin', '/sbin',
+                process.env.HOME ? path.join(process.env.HOME, '.local', 'bin') : null
+            ].filter(Boolean);
+            env.PATH = [...new Set([...standardPaths, ...(env.PATH || '').split(':')])].join(':');
+        }
+
+        const findCommand = (commands) => {
+            return new Promise(resolve => {
+                let found = false;
+                const tryNext = (index) => {
+                    if (found || index >= commands.length) {
+                        resolve(found ? commands[index-1] : null);
+                        return;
+                    }
+                    const cmd = commands[index];
+                    const probe = spawn(cmd, ['--version'], { env, shell: osType === 'win32' });
+                    
+                    probe.on('error', () => tryNext(index + 1));
+                    
+                    probe.on('close', (code) => {
+                        if (code === 0) {
+                            found = true;
+                        }
+                        tryNext(index + 1);
+                    });
+                };
+                tryNext(0);
+            });
+        };
+
+        const pythonCmd = await findCommand(pythonCandidates);
+        const pipCmd = await findCommand(pipCandidates);
+        
+        logger.info(`[荷花插件] 环境检查完成。Python: ${pythonCmd || '未找到'}, Pip: ${pipCmd || '未找到'}`);
+
+        this.commandsAndEnv = { pythonCmd, pipCmd, env };
+        return this.commandsAndEnv;
+    }
+
     getLocalTimestamp() {
         const now = new Date();
         const year = now.getFullYear();
@@ -206,18 +245,20 @@ export class lotusCheckin extends plugin {
 
     async initialize(e) {
         await e.reply("正在开始初始化Python环境，将安装依赖库，请稍候...");
+        
         if (!fs.existsSync(bbsToolsPath)) {
             return e.reply("错误：未找到 MihoyoBBSTools 文件夹，请确保它已放置在Lotus-Plugin插件目录下。");
         }
         
-        const pipCmd = await this._findAvailableCommand(['pip', 'pip3']);
+        const { pipCmd, env } = await this._getCommandsAndEnv();
+
         if (!pipCmd) {
             logger.error('[荷花插件] 初始化失败，系统中未找到 "pip" 或 "pip3" 命令。');
-            return e.reply('初始化失败，系统中未找到 "pip" 或 "pip3" 命令。');
+            return e.reply('初始化失败，未找到可用的 pip 命令，请检查Python环境或PATH配置。');
         }
 
         logger.info(`[荷花插件] 使用 "${pipCmd}" 开始初始化...`);
-        const pip = spawn(pipCmd, ['install', '-r', 'requirements.txt'], { cwd: bbsToolsPath });
+        const pip = spawn(pipCmd, ['install', '-r', 'requirements.txt'], { cwd: bbsToolsPath, env });
 
         pip.stdout.on('data', (data) => logger.info(`[荷花插件][${pipCmd}]: ${data}`));
         pip.stderr.on('data', (data) => logger.error(`[荷花插件][${pipCmd}]: ${data}`));
@@ -408,7 +449,8 @@ export class lotusCheckin extends plugin {
             return;
         }
         
-        const pythonCmd = await this._findAvailableCommand(['python', 'python3']);
+        const { pythonCmd, env } = await this._getCommandsAndEnv();
+
         if (!pythonCmd) {
             const errorMsg = `[荷花插件] 执行失败: 未找到 "python" 或 "python3" 命令。`;
             logger.error(errorMsg);
@@ -420,7 +462,7 @@ export class lotusCheckin extends plugin {
         const tempLogfile = path.join(bbsToolsPath, `temp_run_${Date.now()}.log`);
         const command = `${pythonCmd} -u main_multi.py autorun > "${tempLogfile}" 2>&1`;
 
-        const py = spawn(command, { cwd: bbsToolsPath, shell: true });
+        const py = spawn(command, { cwd: bbsToolsPath, shell: true, env });
         
         py.on('error', (err) => {
             logger.error(`[荷花插件] 签到进程启动失败: ${err.message}`);
