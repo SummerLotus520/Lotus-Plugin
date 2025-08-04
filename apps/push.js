@@ -6,7 +6,7 @@ import { getGameIds, GAME_CONFIG } from '../model/pushUtil.js';
 export class push extends plugin {
   constructor() {
     super({
-      name: '游戏版本推送',
+      name: '游戏版本推送-未完成',
       dsc: '自动监控游戏版本更新并推送，支持版本查询',
       event: 'message',
       priority: 500,
