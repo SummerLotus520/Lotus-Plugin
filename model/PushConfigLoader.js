@@ -60,6 +60,10 @@ class PushConfigLoader {
     } catch (err) { logger.error(`[${pluginName}] 加载 pushBase.yaml 失败: ${err}`); }
   }
 
+  getAll() {
+    return this.config;
+  }
+
   getGameConfig(gameId) { return this.config?.[gameId]; }
   getGameBaseConfig(gameId) { return this.baseConfig?.[gameId]; }
 }
