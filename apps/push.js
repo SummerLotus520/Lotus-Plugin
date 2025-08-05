@@ -1,4 +1,4 @@
-import plugin from '../../../lib/plugins/plugin.js';
+import plugin from '../../../../../lib/plugins/plugin.js';
 import pushCfg from '../model/PushConfigLoader.js';
 import pushApi from '../model/pushApi.js';
 import { getGameIds, getRedisKeys, GAME_CONFIG } from '../model/pushUtil.js';
@@ -12,8 +12,13 @@ export class push extends plugin {
       priority: 500,
       rule: [
         {
-          reg: '^(#|/)(原神|星铁|绝区零|崩坏三|全部)版本查询$',
+          reg: '^(#|/)(原神|星铁|绝区零|崩坏三|常用|全部)版本查询$',
           fnc: 'queryVersion'
+        },
+        {
+          reg: '^(#|/)(添加|删除)(原神|星铁|绝区零|崩坏三|常用|全部)推送$',
+          fnc: 'managePush',
+          permission: 'master'
         },
         {
           reg: '^(#|/)手动检查版本$',
@@ -37,10 +42,8 @@ export class push extends plugin {
   }
 
   async runTask(isManual = false) {
-    logger.debug('[Lotus-Push] 开始执行版本检查任务...');
     const allGameConfigs = pushCfg.getAll();
     const gameIds = getGameIds();
-
     for (const gameId of gameIds) {
       if (allGameConfigs[gameId]?.enable) {
         await pushApi.checkGameVersion(gameId, isManual);
@@ -50,11 +53,11 @@ export class push extends plugin {
 
   async queryVersion(e) {
     const queryKey = e.msg.replace(/#|版本查询|\//g, '').trim();
-    
-    if (queryKey === '全部') {
+    const gameIdsToQuery = this.resolveGameKeyword(queryKey);
+
+    if (gameIdsToQuery.length > 1) {
       const allInfo = [];
-      const gameIds = getGameIds();
-      for (const gameId of gameIds) {
+      for (const gameId of gameIdsToQuery) {
         const info = await pushApi.getVersionInfo(gameId);
         allInfo.push(this.formatInfo(info));
       }
@@ -62,19 +65,50 @@ export class push extends plugin {
       return e.reply(combinedMsg, true);
     }
     
-    const gameId = Object.keys(GAME_CONFIG).find(id => GAME_CONFIG[id].name.includes(queryKey));
-
-    if (!gameId) return;
-
-    const info = await pushApi.getVersionInfo(gameId);
+    const info = await pushApi.getVersionInfo(gameIdsToQuery[0]);
     e.reply(this.formatInfo(info), true);
   }
+
+  async managePush(e) {
+    if (!e.isGroup) {
+      return e.reply('此命令仅限群聊中使用。', true);
+    }
+
+    const action = e.msg.includes('添加') ? 'add' : 'remove';
+    const actionText = action === 'add' ? '添加' : '删除';
+    const queryKey = e.msg.replace(/#|\/|添加|删除|推送/g, '').trim();
+    const gameIdsToManage = this.resolveGameKeyword(queryKey);
+    const successGames = [];
+
+    for (const gameId of gameIdsToManage) {
+      const success = pushCfg.updatePushGroup(gameId, e.group_id, action === 'add');
+      if (success) {
+        successGames.push(GAME_CONFIG[gameId].name);
+      }
+    }
+
+    if (successGames.length > 0) {
+      e.reply(`操作成功！\n已为本群${actionText}以下游戏的推送：\n${successGames.join('、')}`, true);
+    } else {
+      e.reply(`操作失败，请检查游戏名称是否正确。`, true);
+    }
+  }
   
+  resolveGameKeyword(keyword) {
+    if (keyword === '全部') {
+      return getGameIds();
+    }
+    if (keyword === '常用') {
+      return getGameIds().filter(id => id !== 'bh3');
+    }
+    const gameId = Object.keys(GAME_CONFIG).find(id => GAME_CONFIG[id].name.includes(keyword));
+    return gameId ? [gameId] : [];
+  }
+
   formatInfo(info) {
     if (info.message) {
       return info.message;
     }
-    
     return [
       `[荷花插件]`,
       `-- ${info.gameName} 版本查询 --`,
@@ -96,10 +130,7 @@ export class push extends plugin {
     const gameIds = getGameIds();
     for (const gameId of gameIds) {
       const keys = getRedisKeys(gameId);
-      await redis.del(keys.main);
-      await redis.del(keys.mainDate);
-      await redis.del(keys.pre);
-      await redis.del(keys.preDate);
+      await redis.del(keys.main, keys.mainDate, keys.pre, keys.preDate);
     }
     e.reply('已清空所有游戏的版本缓存。', true);
   }
