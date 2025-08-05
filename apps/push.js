@@ -1,4 +1,4 @@
-import plugin from '../../../../../lib/plugins/plugin.js';
+import plugin from '../../../lib/plugins/plugin.js';
 import pushCfg from '../model/PushConfigLoader.js';
 import pushApi from '../model/pushApi.js';
 import { getGameIds, getRedisKeys, GAME_CONFIG } from '../model/pushUtil.js';
