@@ -1,4 +1,4 @@
-import plugin from '../../../lib/plugins/plugin.js';
+import plugin from '../../../../../lib/plugins/plugin.js';
 import pushCfg from '../model/PushConfigLoader.js';
 import pushApi from '../model/pushApi.js';
 import { getGameIds, getRedisKeys, GAME_CONFIG } from '../model/pushUtil.js';
@@ -31,19 +31,19 @@ export class push extends plugin {
     this.task = {
       cron: '0 */5 * * * *',
       name: '游戏版本更新监控',
-      fnc: () => this.runTask(),
+      fnc: () => this.runTask(false),
       log: false
     };
   }
 
-  async runTask() {
-    logger.debug('[Lotus-Push] 开始执行版本检查定时任务...');
+  async runTask(isManual = false) {
+    logger.debug('[Lotus-Push] 开始执行版本检查任务...');
     const allGameConfigs = pushCfg.getAll();
     const gameIds = getGameIds();
 
     for (const gameId of gameIds) {
       if (allGameConfigs[gameId]?.enable) {
-        await pushApi.checkGameVersion(gameId);
+        await pushApi.checkGameVersion(gameId, isManual);
       }
     }
   }
@@ -87,9 +87,9 @@ export class push extends plugin {
   }
 
   async manualCheck(e) {
-    e.reply('收到，开始手动检查所有已开启的游戏版本，请稍后...');
-    await this.runTask();
-    e.reply('手动检查任务已执行完毕。');
+    e.reply('开始静默更新后台版本数据...');
+    await this.runTask(true);
+    e.reply('手动检查任务已执行完毕，数据已更新。');
   }
 
   async clearCache(e) {

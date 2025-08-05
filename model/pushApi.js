@@ -5,7 +5,7 @@ import { getGameApiUrl, getRedisKeys, getGameName } from "./pushUtil.js";
 const versionCompare = new Intl.Collator(undefined, { numeric: true }).compare;
 
 class PushApi {
-  async checkGameVersion(gameId) {
+  async checkGameVersion(gameId, isManual = false) {
     const apiUrl = getGameApiUrl(gameId);
     if (!apiUrl) return;
     try {
@@ -20,31 +20,48 @@ class PushApi {
         logger.warn(`[Lotus-Push] 解析 ${getGameName(gameId)} 数据失败`);
         return;
       }
-      await this.checkVersionType('main', gameId, gameData.main?.tag);
-      await this.checkVersionType('pre', gameId, gameData.pre_download?.tag);
+      await this.checkVersionType('main', gameId, gameData.main?.tag, isManual);
+      await this.checkVersionType('pre', gameId, gameData.pre_download?.tag, isManual);
     } catch (error) {
       logger.error(`[Lotus-Push] 检查 ${getGameName(gameId)} 版本时出错:`, error);
     }
   }
 
-  async checkVersionType(type, gameId, newVersion) {
+  async checkVersionType(type, gameId, newVersion, isManual = false) {
     const keys = getRedisKeys(gameId);
     const versionKey = keys[type];
     const dateKey = keys[`${type}Date`];
     const oldVersion = await redis.get(versionKey);
+
     if (newVersion) {
       if (!oldVersion || versionCompare(newVersion, oldVersion) > 0) {
-        const today = new Date().toISOString().slice(0, 10);
+        let dateToSet;
+        if (!oldVersion) {
+          const baseInfo = pushCfg.getGameBaseConfig(gameId);
+          if (baseInfo && newVersion === baseInfo.baseVersion) {
+            dateToSet = baseInfo.baseDate;
+          }
+        }
+        if (!dateToSet) {
+          dateToSet = new Date().toISOString().slice(0, 10);
+        }
+
         await redis.set(versionKey, newVersion);
-        await redis.set(dateKey, today);
-        logger.mark(`[Lotus-Push] ${getGameName(gameId)} ${type === 'main' ? '正式版' : '预下载'}更新: ${oldVersion || '无'} -> ${newVersion}`);
-        this.sendPushMessage(type, gameId, oldVersion || "旧版本", newVersion);
+        await redis.set(dateKey, dateToSet);
+        
+        if (oldVersion && !isManual) {
+            logger.mark(`[Lotus-Push] ${getGameName(gameId)} ${type === 'main' ? '正式版' : '预下载'}更新: ${oldVersion} -> ${newVersion}`);
+            this.sendPushMessage(type, gameId, oldVersion, newVersion);
+        }
       }
     } else if (oldVersion && type === 'pre') {
       await redis.del(versionKey);
       await redis.del(dateKey);
-      logger.mark(`[Lotus-Push] ${getGameName(gameId)} 预下载关闭，旧版本: ${oldVersion}`);
-      this.sendPushMessage('pre-remove', gameId, oldVersion, null);
+      
+      if (!isManual) {
+        logger.mark(`[Lotus-Push] ${getGameName(gameId)} 预下载关闭，旧版本: ${oldVersion}`);
+        this.sendPushMessage('pre-remove', gameId, oldVersion, null);
+      }
     }
   }
 
@@ -95,7 +112,7 @@ class PushApi {
           const data = await res.json();
           const apiVersion = data?.data?.game_branches?.[0]?.main?.tag;
           if (apiVersion && apiVersion !== version) {
-            logger.warn(`[Lotus-Push] 警告：API实时版本(${apiVersion})与您的基准文件版本(${version})不一致。查询结果将基于基准文件，请及时更新pushBase.yaml以获得最准确的计算！`);
+            logger.warn(`[Lotus-Push] 警告：API实时版本(${apiVersion})与您的基准文件版本(${version})不一致。查询结果将基于基准文件，请及时更新pushBase.yaml！`);
           }
         } catch (e) {}
       }
