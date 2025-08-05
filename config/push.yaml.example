@@ -25,7 +25,7 @@ zzz:
   pushGroups: [] # 示例：没有要推送的群
   defaultCycleDays: 42
   specialCycles: 
-    - version: "2.1"
+    - version: "2.1.0"
       days: 50
 
 bh3:

@@ -5,18 +5,14 @@ import chokidar from "chokidar";
 
 const pluginName = "Lotus-Plugin";
 const pluginRoot = path.resolve(process.cwd(), 'plugins', pluginName);
+const configDir = path.join(pluginRoot, "config"); 
 
 class PushConfigLoader {
   constructor() {
-    const dataDir = path.join(process.cwd(), "data", pluginName);
-    if (!fs.existsSync(dataDir)) {
-      fs.mkdirSync(dataDir, { recursive: true });
-    }
-
-    this.configPath = path.join(dataDir, "push.yaml");
-    this.examplePath = path.join(pluginRoot, "config", "push.yaml.example");
-    this.baseConfigPath = path.join(dataDir, "pushBase.yaml");
-    this.baseExamplePath = path.join(pluginRoot, "config", "pushBase.yaml.example");
+    this.configPath = path.join(configDir, "push.yaml");
+    this.examplePath = path.join(configDir, "push.yaml.example");
+    this.baseConfigPath = path.join(configDir, "pushBase.yaml");
+    this.baseExamplePath = path.join(configDir, "pushBase.yaml.example");
 
     this.config = {};
     this.baseConfig = {};
@@ -32,6 +28,10 @@ class PushConfigLoader {
   }
 
   init() {
+    if (!fs.existsSync(configDir)) {
+      fs.mkdirSync(configDir, { recursive: true });
+    }
+
     if (!fs.existsSync(this.configPath)) {
       logger.mark(`[${pluginName}] 未找到 push.yaml，将从模板创建...`);
       try { fs.copyFileSync(this.examplePath, this.configPath); } 

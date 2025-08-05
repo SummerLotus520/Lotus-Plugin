@@ -79,48 +79,33 @@ class PushApi {
     let updateDateStr = await redis.get(keys.mainDate);
 
     if (!version || !updateDateStr) {
-      logger.debug(`[Lotus-Push] Redis缓存未命中，开始重建 ${getGameName(gameId)} 的信息...`);
+      logger.debug(`[Lotus-Push] Redis缓存未命中，将从基准文件重建 ${getGameName(gameId)} ...`);
       const baseInfo = pushCfg.getGameBaseConfig(gameId);
       if (!baseInfo?.baseVersion || !baseInfo?.baseDate) {
         return { message: `${getGameName(gameId)} 的基准信息未配置。` };
       }
 
-      let finalVersion = "Current";
-      let finalDateStr = baseInfo.baseDate;
+      version = baseInfo.baseVersion;
+      updateDateStr = baseInfo.baseDate;
 
       const apiUrl = getGameApiUrl(gameId);
-      let apiVersion;
       if (apiUrl) {
         try {
           const res = await fetch(apiUrl);
           const data = await res.json();
-          apiVersion = data?.data?.game_branches?.[0]?.main?.tag;
+          const apiVersion = data?.data?.game_branches?.[0]?.main?.tag;
+          if (apiVersion && apiVersion !== version) {
+            logger.warn(`[Lotus-Push] 警告：API实时版本(${apiVersion})与您的基准文件版本(${version})不一致。查询结果将基于基准文件，请及时更新pushBase.yaml以获得最准确的计算！`);
+          }
         } catch (e) {}
       }
-
-      if (apiVersion) {
-        finalVersion = apiVersion;
-        if (apiVersion === baseInfo.baseVersion) {
-          finalDateStr = baseInfo.baseDate;
-        } else {
-          finalVersion = 'Current';
-          finalDateStr = new Date().toISOString().slice(0, 10);
-          logger.warn(`[Lotus-Push] API版本(${apiVersion})与基准版本(${baseInfo.baseVersion})不符，无法追溯历史。版本将显示为'Current'，日期从今天开始。`);
-        }
-      } else {
-        finalVersion = baseInfo.baseVersion;
-        finalDateStr = baseInfo.baseDate;
-      }
       
-      await redis.set(keys.main, finalVersion);
-      await redis.set(keys.mainDate, finalDateStr);
-
-      version = finalVersion;
-      updateDateStr = finalDateStr;
+      await redis.set(keys.main, version);
+      await redis.set(keys.mainDate, updateDateStr);
     }
     
     const updateDate = new Date(updateDateStr);
-    const today = new Date();
+    const today = new new Date();
     updateDate.setHours(0, 0, 0, 0);
     today.setHours(0, 0, 0, 0);
     const daysPassed = Math.round((today - updateDate) / (1000 * 60 * 60 * 24));
