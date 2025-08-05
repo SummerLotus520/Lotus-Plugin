@@ -63,6 +63,8 @@ export class push extends plugin {
       }
       const combinedMsg = allInfo.join('\n\n');
       return e.reply(combinedMsg, true);
+    } else if (gameIdsToQuery.length === 0) {
+      return;
     }
     
     const info = await pushApi.getVersionInfo(gameIdsToQuery[0]);
@@ -101,7 +103,7 @@ export class push extends plugin {
     if (keyword === '常用') {
       return getGameIds().filter(id => id !== 'bh3');
     }
-    const gameId = Object.keys(GAME_CONFIG).find(id => GAME_CONFIG[id].name.includes(keyword));
+    const gameId = Object.keys(GAME_CONFIG).find(id => GAME_CONFIG[id].aliases.includes(keyword));
     return gameId ? [gameId] : [];
   }
 
