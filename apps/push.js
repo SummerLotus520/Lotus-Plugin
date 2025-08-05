@@ -16,7 +16,7 @@ export class push extends plugin {
           fnc: 'queryVersion'
         },
         {
-          reg: '^(#|/)(添加|删除)(原神|星铁|绝区零|崩坏三|常用|全部)推送$',
+          reg: '^(#|/)荷花推送(添加|删除)(原神|星铁|绝区零|崩坏三|常用|全部)$',
           fnc: 'managePush',
           permission: 'master'
         },
@@ -76,7 +76,7 @@ export class push extends plugin {
 
     const action = e.msg.includes('添加') ? 'add' : 'remove';
     const actionText = action === 'add' ? '添加' : '删除';
-    const queryKey = e.msg.replace(/#|\/|添加|删除|推送/g, '').trim();
+    const queryKey = e.msg.replace(/#|\/|荷花推送|添加|删除/g, '').trim();
     const gameIdsToManage = this.resolveGameKeyword(queryKey);
     const successGames = [];
 
