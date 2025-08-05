@@ -105,7 +105,7 @@ class PushApi {
     }
     
     const updateDate = new Date(updateDateStr);
-    const today = new new Date();
+    const today = new Date();
     updateDate.setHours(0, 0, 0, 0);
     today.setHours(0, 0, 0, 0);
     const daysPassed = Math.round((today - updateDate) / (1000 * 60 * 60 * 24));
