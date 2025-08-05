@@ -8,77 +8,60 @@ const pluginRoot = path.resolve(process.cwd(), 'plugins', pluginName);
 
 class PushConfigLoader {
   constructor() {
-    this.configPath = path.join(process.cwd(), "data", pluginName, "push.yaml");
+    const dataDir = path.join(process.cwd(), "data", pluginName);
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+
+    this.configPath = path.join(dataDir, "push.yaml");
     this.examplePath = path.join(pluginRoot, "config", "push.yaml.example");
+    this.baseConfigPath = path.join(dataDir, "pushBase.yaml");
+    this.baseExamplePath = path.join(pluginRoot, "config", "pushBase.yaml.example");
 
     this.config = {};
+    this.baseConfig = {};
+    
     this.init();
 
-    this.watcher = chokidar.watch(this.configPath);
-    this.watcher.on("change", () => {
-      logger.mark(`[${pluginName}] 检测到 push.yaml 配置变化，重新加载...`);
-      this.loadConfig();
+    this.watcher = chokidar.watch([this.configPath, this.baseConfigPath]);
+    this.watcher.on("change", (path) => {
+      logger.mark(`[${pluginName}] 检测到配置变化: ${path}，重新加载...`);
+      if (path.includes('push.yaml')) this.loadConfig();
+      if (path.includes('pushBase.yaml')) this.loadBaseConfig();
     });
   }
 
   init() {
-    const configDir = path.dirname(this.configPath);
-    if (!fs.existsSync(configDir)) {
-      fs.mkdirSync(configDir, { recursive: true });
-    }
     if (!fs.existsSync(this.configPath)) {
-      logger.mark(`[${pluginName}] 未找到 push.yaml 配置文件，将从模板创建...`);
-      try {
-        fs.copyFileSync(this.examplePath, this.configPath);
-      } catch (err) {
-        logger.error(`[${pluginName}] 创建配置文件失败: ${err}`);
-        return;
-      }
+      logger.mark(`[${pluginName}] 未找到 push.yaml，将从模板创建...`);
+      try { fs.copyFileSync(this.examplePath, this.configPath); } 
+      catch (err) { logger.error(`[${pluginName}] 创建 push.yaml 失败: ${err}`); }
     }
+    
+    if (!fs.existsSync(this.baseConfigPath)) {
+      logger.mark(`[${pluginName}] 未找到 pushBase.yaml，将从模板创建...`);
+      try { fs.copyFileSync(this.baseExamplePath, this.baseConfigPath); } 
+      catch (err) { logger.error(`[${pluginName}] 创建 pushBase.yaml 失败: ${err}`); }
+    }
+
     this.loadConfig();
+    this.loadBaseConfig();
   }
 
   loadConfig() {
     try {
-      const fileContent = fs.readFileSync(this.configPath, "utf8");
-      this.config = YAML.parse(fileContent);
-      logger.debug(`[${pluginName}] push.yaml 配置加载成功`);
-    } catch (err) {
-      logger.error(`[${pluginName}] 加载 push.yaml 配置文件失败: ${err}`);
-    }
+      this.config = YAML.parse(fs.readFileSync(this.configPath, "utf8"));
+    } catch (err) { logger.error(`[${pluginName}] 加载 push.yaml 失败: ${err}`); }
   }
 
-  /**
-   * 获取所有配置
-   * @returns {object}
-   */
-  getAll() {
-    return this.config;
-  }
-  
-  /**
-   * 获取指定游戏的配置
-   * @param {string} gameId - 游戏标识
-   * @returns {object | undefined}
-   */
-  getGameConfig(gameId) {
-    return this.config?.[gameId];
-  }
-
-  /**
-   * 保存配置
-   * @param {object} newConfig 
-   * @returns {boolean}
-   */
-  saveConfig(newConfig) {
+  loadBaseConfig() {
     try {
-      fs.writeFileSync(this.configPath, YAML.stringify(newConfig), "utf8");
-      this.config = newConfig; 
-      return true;
-    } catch(err) {
-      logger.error(`[${pluginName}] 保存 push.yaml 失败: ${err}`);
-      return false;
-    }
+      this.baseConfig = YAML.parse(fs.readFileSync(this.baseConfigPath, "utf8"));
+    } catch (err) { logger.error(`[${pluginName}] 加载 pushBase.yaml 失败: ${err}`); }
   }
+
+  getGameConfig(gameId) { return this.config?.[gameId]; }
+  getGameBaseConfig(gameId) { return this.baseConfig?.[gameId]; }
 }
+
 export default new PushConfigLoader();
