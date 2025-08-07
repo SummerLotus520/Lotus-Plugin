@@ -7,16 +7,24 @@ import requests
 import traceback
 import json
 
+# 定义项目根目录和子模块的路径
 lotus_plugin_root = os.path.dirname(os.path.dirname(__file__))
 geetest_crack_root = os.path.join(lotus_plugin_root, 'geetest-crack')
 geetest_crack_package_path = os.path.join(geetest_crack_root, 'geetest_crack')
 
-sys.path.append(geetest_crack_root)
-sys.path.append(geetest_crack_package_path)
+# 检查路径是否存在，以防万一
+if not os.path.isdir(geetest_crack_package_path):
+    print(f"Error: Submodule path not found at {geetest_crack_package_path}", file=sys.stderr)
+    sys.exit(1)
 
-from geetest_crack.geetest_session import GSession
-from geetest_crack.utils.response import Resp
-from geetest_crack.utils.logger import logger
+# 【核心修正】在导入任何子模块代码之前，改变当前工作目录
+os.chdir(geetest_crack_package_path)
+
+# 现在，Python 会把 geetest_crack_package_path 视为 '.'
+# 所以 geetest_session.py 内部的 'from config import ...' 就能正常工作
+from geetest_session import GSession
+from utils.response import Resp
+from utils.logger import logger
 
 class MysGeetestSession(GSession):
     def __init__(self, uid, cookie):
