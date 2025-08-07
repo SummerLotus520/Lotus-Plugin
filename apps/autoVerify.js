@@ -3,6 +3,7 @@ import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { GeetestSolver } from '../model/GeetestSolver.js';
+import MysApi from '../model/MysApi.js';
 
 const botRoot = path.resolve(process.cwd());
 
@@ -122,9 +123,10 @@ export class autoVerify extends plugin {
              this.solver = new GeetestSolver({ pythonCmd });
         }
         
-        const create = await mysApi.getData('createVerification', {is_high:false});
+        const verificationApi = new MysApi(mysApi.uid, mysApi.cookie);
+        const create = await verificationApi.getData('createVerification');
         
-        if (create?.retcode !== 0) {
+        if (!create || create?.retcode !== 0) {
             logger.error(`[荷花插件][自动过码] 获取 gt challenge 失败，米游社返回: ${JSON.stringify(create)}`);
             await e.reply(`[荷花插件] 自动验证失败：无法获取验证码凭证(${create?.message || '返回内容不符合预期'})`);
             delete e.isVerifying;
