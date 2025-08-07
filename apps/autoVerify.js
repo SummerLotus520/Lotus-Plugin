@@ -116,7 +116,8 @@ export class autoVerify extends plugin {
         }
         
         try {
-            const geetestCrackPackagePath = path.join(lotusPluginRoot, 'geetest-crack', 'geetest_crack');
+            const geetestCrackRoot = path.join(lotusPluginRoot, 'geetest-crack');
+            const geetestCrackPackagePath = path.join(geetestCrackRoot, 'geetest_crack');
             
             const shellOptions = {
                 mode: 'text',
@@ -124,7 +125,7 @@ export class autoVerify extends plugin {
                 pythonOptions: ['-u'],
                 scriptPath: path.join(lotusPluginRoot, 'model'),
                 args: [mysApi.uid, mysApi.cookie],
-                cwd: geetestCrackPackagePath 
+                pythonPath: [geetestCrackRoot, geetestCrackPackagePath]
             };
             
             const results = await PythonShell.run('MysGeetestSession.py', shellOptions);
