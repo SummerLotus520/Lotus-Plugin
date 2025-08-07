@@ -35,13 +35,16 @@ export class autoVerify extends plugin {
         this.pythonCmd = null;
         this.isInstalling = false;
     }
-    
+
     async installEnv(e) {
         if (this.isInstalling) {
             return e.reply('[荷花插件] 正在安装中，请勿重复执行...');
         }
         this.isInstalling = true;
         await e.reply('[荷花插件] 开始注册过码环境，将安装Python依赖，请稍候...');
+
+        const tempDir = path.join(lotusPluginRoot, 'data', 'temp');
+        const tempRequirementsPath = path.join(tempDir, 'requirements_modified.txt');
 
         try {
             const pythonCmd = await this.getPythonCommand();
@@ -53,21 +56,34 @@ export class autoVerify extends plugin {
             if (!fs.existsSync(requirementsPath)) {
                 throw new Error("未找到 geetest-crack/requirements.txt，请确认已正确添加submodule。");
             }
+
+            await e.reply('[荷花插件] 步骤 1/2: 正在准备定制化依赖文件...');
+            if (!fs.existsSync(tempDir)) {
+                fs.mkdirSync(tempDir, { recursive: true });
+            }
+            const originalContent = fs.readFileSync(requirementsPath, 'utf8');
+            const modifiedContent = originalContent.replace('Pillow==10.2.0', 'Pillow==10.4.0');
+            fs.writeFileSync(tempRequirementsPath, modifiedContent, 'utf8');
+            logger.info(`[荷花插件] 已动态生成依赖文件，Pillow 版本已调整为 10.4.0`);
             
-            await e.reply('[荷花插件] 正在安装 geetest-crack 所需的Python库...');
+            await e.reply('[荷花插件] 步骤 2/2: 正在安装 geetest-crack 所需的Python库...');
             await new Promise((resolve, reject) => {
-                const pip = spawn(pythonCmd, ['-m', 'pip', 'install', '-r', requirementsPath]);
+                const pip = spawn(pythonCmd, ['-m', 'pip', 'install', '-r', tempRequirementsPath]);
                 pip.stdout.on('data', (data) => logger.info(`[荷花插件][pip install]: ${data.toString()}`));
                 pip.stderr.on('data', (data) => logger.error(`[荷花插件][pip install]: ${data.toString()}`));
                 pip.on('error', reject);
                 pip.on('close', code => code === 0 ? resolve() : reject(new Error(`Pip进程退出，代码: ${code}`)));
             });
-            await e.reply('[荷花插件] 过码环境依赖安装成功！本插件将自动工作。');
+            await e.reply('[荷花插件] 过码环境依赖全部安装成功！本插件将自动工作。');
 
         } catch (error) {
             logger.error(`[荷花插件] 环境注册失败:`, error);
             await e.reply(`[荷花插件] 环境注册失败: ${error.message}`);
         } finally {
+            if (fs.existsSync(tempRequirementsPath)) {
+                fs.unlinkSync(tempRequirementsPath);
+                logger.info(`[荷花插件] 已清理临时依赖文件。`);
+            }
             this.isInstalling = false;
         }
         return true;
