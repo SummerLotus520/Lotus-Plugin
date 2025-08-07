@@ -3,7 +3,6 @@ import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { GeetestSolver } from '../model/GeetestSolver.js';
-import MysApi from '../model/MysApi.js';
 
 const botRoot = path.resolve(process.cwd());
 
@@ -40,7 +39,7 @@ export class autoVerify extends plugin {
     async init() {
         const playwrightRootPath = path.join(botRoot, 'node_modules', 'playwright');
         if (!fs.existsSync(playwrightRootPath)) {
-            logger.warn('[荷花插件] 检测到 Playwright 依赖未安装，请在机器人主目录执行 yarn install，然后发送 #注册过码环境');
+            logger.warn('[荷花插件] 检测到 Playwright 依赖未安装，请主人发送 #注册过码环境 进行初始化。');
         }
     }
 
@@ -123,9 +122,11 @@ export class autoVerify extends plugin {
              this.solver = new GeetestSolver({ pythonCmd });
         }
         
-        const create = await mysApi.getData('createVerification');
+        const create = await mysApi.getData('createVerification', {is_high:false});
+        
         if (create?.retcode !== 0) {
-            await e.reply(`[荷花插件] 自动验证失败：无法获取验证码凭证(${create?.message})`);
+            logger.error(`[荷花插件][自动过码] 获取 gt challenge 失败，米游社返回: ${JSON.stringify(create)}`);
+            await e.reply(`[荷花插件] 自动验证失败：无法获取验证码凭证(${create?.message || '返回内容不符合预期'})`);
             delete e.isVerifying;
             return reject();
         }
