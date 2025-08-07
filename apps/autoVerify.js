@@ -116,12 +116,15 @@ export class autoVerify extends plugin {
         }
         
         try {
+            const geetestCrackPackagePath = path.join(lotusPluginRoot, 'geetest-crack', 'geetest_crack');
+            
             const shellOptions = {
                 mode: 'text',
                 pythonPath: pythonCmd,
                 pythonOptions: ['-u'],
                 scriptPath: path.join(lotusPluginRoot, 'model'),
-                args: [mysApi.uid, mysApi.cookie]
+                args: [mysApi.uid, mysApi.cookie],
+                cwd: geetestCrackPackagePath 
             };
             
             const results = await PythonShell.run('MysGeetestSession.py', shellOptions);

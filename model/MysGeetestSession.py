@@ -7,16 +7,6 @@ import requests
 import traceback
 import json
 
-# 【核心修正】定义所有需要的路径
-lotus_plugin_root = os.path.dirname(os.path.dirname(__file__))
-geetest_crack_root = os.path.join(lotus_plugin_root, 'geetest-crack')
-geetest_crack_package_path = os.path.join(geetest_crack_root, 'geetest_crack')
-
-# 【核心修正】将两个关键目录都添加到 sys.path
-# 这能让 Python 既能找到 geetest_crack 这个包，也能找到包内部的 config 等模块
-sys.path.insert(0, geetest_crack_root)
-sys.path.insert(0, geetest_crack_package_path)
-
 from geetest_crack.geetest_session import GSession
 from geetest_crack.utils.response import Resp
 from geetest_crack.utils.logger import logger
