@@ -40,7 +40,7 @@ export class autoVerify extends plugin {
     async init() {
         const playwrightRootPath = path.join(botRoot, 'node_modules', 'playwright');
         if (!fs.existsSync(playwrightRootPath)) {
-            logger.warn('[荷花插件] 检测到 Playwright 依赖未安装，请主人发送 #注册过码环境 进行初始化。');
+            logger.warn('[荷花插件] 检测到 Playwright 依赖未安装，请在机器人主目录执行 yarn install，然后发送 #注册过码环境');
         }
     }
 
@@ -69,9 +69,10 @@ export class autoVerify extends plugin {
 
             await e.reply('[荷花插件] 步骤 2/2: 正在安装浏览器核心 (Playwright & Chromium)...');
             
-            const playwrightCliPath = path.join(botRoot, 'node_modules', 'playwright', 'lib', 'cli', 'cli.js');
+            const playwrightCliPath = path.join(botRoot, 'node_modules', 'playwright', 'cli.js');
+            
             if (!fs.existsSync(playwrightCliPath)) {
-                throw new Error("Playwright CLI 未找到。请确保已在机器人主目录执行 'yarn install' 或 'npm install' 来安装所有依赖。");
+                throw new Error("Playwright CLI 未找到。请确保已在机器人主目录执行 'yarn install' 且依赖安装无误。");
             }
             
             await new Promise((resolve, reject) => {
