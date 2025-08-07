@@ -60,6 +60,7 @@ export class GeetestSolver {
                             window.geetest_validate_result = captchaObj.getValidate();
                         });
                         captchaObj.onReady(() => {
+                            captchaObj.verify(); 
                             resolve();
                         });
                         captchaObj.appendTo('#geetest-container');
