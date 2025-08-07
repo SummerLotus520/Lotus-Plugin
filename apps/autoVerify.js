@@ -5,7 +5,7 @@ import fs from 'fs';
 import { GeetestSolver } from '../model/GeetestSolver.js';
 import MysApi from '../model/MysApi.js';
 
-const lotusPluginRoot = path.resolve(process.cwd(), 'plugins', 'Lotus-Plugin');
+const botRoot = path.resolve(process.cwd());
 
 export class autoVerify extends plugin {
     constructor() {
@@ -38,8 +38,9 @@ export class autoVerify extends plugin {
     }
 
     async init() {
-        if (!fs.existsSync(path.join(lotusPluginRoot, 'node_modules', 'playwright'))) {
-            logger.warn('[荷花插件] 检测到依赖未完全安装，请主人发送 #注册过码环境 进行初始化。');
+        const playwrightRootPath = path.join(botRoot, 'node_modules', 'playwright');
+        if (!fs.existsSync(playwrightRootPath)) {
+            logger.warn('[荷花插件] 检测到 Playwright 依赖未安装，请主人发送 #注册过码环境 进行初始化。');
         }
     }
 
@@ -59,6 +60,7 @@ export class autoVerify extends plugin {
             await e.reply('[荷花插件] 步骤 1/2: 正在安装Python依赖 (ddddocr)...');
             await new Promise((resolve, reject) => {
                 const pip = spawn(pythonCmd, ['-m', 'pip', 'install', '-U', 'ddddocr']);
+                pip.stdout.on('data', (data) => logger.info(`[荷花插件][pip install]: ${data.toString()}`));
                 pip.stderr.on('data', (data) => logger.error(`[荷花插件][pip install]: ${data.toString()}`));
                 pip.on('error', reject);
                 pip.on('close', code => code === 0 ? resolve() : reject(new Error(`Pip进程退出，代码: ${code}`)));
@@ -66,12 +68,18 @@ export class autoVerify extends plugin {
             await e.reply('[荷花插件] Python依赖安装成功！');
 
             await e.reply('[荷花插件] 步骤 2/2: 正在安装浏览器核心 (Playwright & Chromium)...');
-            const playwrightCli = path.join(lotusPluginRoot, 'node_modules', 'playwright', 'lib', 'cli', 'cli.js');
-            if (!fs.existsSync(playwrightCli)) {
-                 throw new Error("Playwright CLI 未找到，请先在Lotus-Plugin目录下执行 npm install");
+            
+            const playwrightCliPath = path.join(botRoot, 'node_modules', 'playwright', 'lib', 'cli', 'cli.js');
+            if (!fs.existsSync(playwrightCliPath)) {
+                throw new Error("Playwright CLI 未找到。请确保已在机器人主目录执行 'yarn install' 或 'npm install' 来安装所有依赖。");
             }
+            
             await new Promise((resolve, reject) => {
-                const playwright = spawn('node', [playwrightCli, 'install', 'chromium'], { shell: false });
+                const playwright = spawn('node', [playwrightCliPath, 'install', 'chromium'], { 
+                    cwd: botRoot,
+                    shell: false 
+                });
+                playwright.stdout.on('data', (data) => logger.info(`[荷花插件][Playwright]: ${data.toString()}`));
                 playwright.stderr.on('data', (data) => logger.error(`[荷花插件][Playwright]: ${data.toString()}`));
                 playwright.on('error', reject);
                 playwright.on('close', code => code === 0 ? resolve() : reject(new Error(`Playwright进程退出，代码: ${code}`)));
@@ -101,7 +109,7 @@ export class autoVerify extends plugin {
         }
         e.isVerifying = true;
 
-        logger.info(`[荷花插件][自动过码] 拦截到[uid:${mysApi.uid}]的验证请求 (retcode: 1034)，开始自动处理...`);
+        logger.info(`[荷花插件][自动过码] [uid:${mysApi.uid}] 拦截到验证请求 (retcode: 1034)，开始自动处理...`);
         await e.reply('[荷花插件] 检测到需要安全验证，正在尝试自动处理...', true);
 
         if (!this.solver) {
