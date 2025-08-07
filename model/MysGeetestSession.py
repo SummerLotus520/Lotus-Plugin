@@ -8,12 +8,14 @@ import traceback
 import json
 
 lotus_plugin_root = os.path.dirname(os.path.dirname(__file__))
-geetest_crack_path = os.path.join(lotus_plugin_root, 'geetest-crack')
-sys.path.append(geetest_crack_path)
+geetest_crack_root = os.path.join(lotus_plugin_root, 'geetest-crack')
+geetest_crack_package_path = os.path.join(geetest_crack_root, 'geetest_crack')
+
+sys.path.append(geetest_crack_root)
+sys.path.append(geetest_crack_package_path)
 
 from geetest_crack.geetest_session import GSession
 from geetest_crack.utils.response import Resp
-from geetest_crack.utils.fetch import fetch
 from geetest_crack.utils.logger import logger
 
 class MysGeetestSession(GSession):
