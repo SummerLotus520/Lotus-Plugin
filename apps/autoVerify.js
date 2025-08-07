@@ -35,7 +35,7 @@ export class autoVerify extends plugin {
         this.pythonCmd = null;
         this.isInstalling = false;
     }
-
+    
     async installEnv(e) {
         if (this.isInstalling) {
             return e.reply('[荷花插件] 正在安装中，请勿重复执行...');
@@ -62,9 +62,12 @@ export class autoVerify extends plugin {
                 fs.mkdirSync(tempDir, { recursive: true });
             }
             const originalContent = fs.readFileSync(requirementsPath, 'utf8');
-            const modifiedContent = originalContent.replace('Pillow==10.2.0', 'Pillow==10.4.0');
+            const modifiedContent = originalContent
+                .replace(/Pillow==[\d.]+/, 'Pillow>=10.3.0')
+                .replace(/PyExecJS==[\d.]+/, '');
+            
             fs.writeFileSync(tempRequirementsPath, modifiedContent, 'utf8');
-            logger.info(`[荷花插件] 已动态生成依赖文件，Pillow 版本已调整为 10.4.0`);
+            logger.info(`[荷花插件] 已动态生成依赖文件，Pillow 版本已调整。`);
             
             await e.reply('[荷花插件] 步骤 2/2: 正在安装 geetest-crack 所需的Python库...');
             await new Promise((resolve, reject) => {
@@ -90,10 +93,9 @@ export class autoVerify extends plugin {
     }
     
     async mysReqErrHandler(e, options, reject) {
-        const { mysApi, type, data } = options;
-        const retcode = options.res?.retcode;
+        const { mysApi, type, data, res } = options;
 
-        if (retcode !== 1034) {
+        if (res?.retcode !== 1034) {
             return reject();
         }
 
@@ -113,26 +115,16 @@ export class autoVerify extends plugin {
            return reject();
         }
         
-        const create = await mysApi.getData('createVerification', {is_high:false});
-        if (create?.retcode !== 0) {
-            logger.error(`[荷花插件][自动过码] 获取 gt challenge 失败，米游社返回: ${JSON.stringify(create)}`);
-            await e.reply(`[荷花插件] 自动验证失败：无法获取验证码凭证(${create?.message || '返回内容不符合预期'})`);
-            delete e.isVerifying;
-            return reject();
-        }
-
-        const { gt, challenge } = create.data;
-        
         try {
-            const options = {
+            const shellOptions = {
                 mode: 'text',
                 pythonPath: pythonCmd,
                 pythonOptions: ['-u'],
                 scriptPath: path.join(lotusPluginRoot, 'model'),
-                args: [gt, challenge]
+                args: [mysApi.uid, mysApi.cookie]
             };
             
-            const results = await PythonShell.run('run_crack.py', options);
+            const results = await PythonShell.run('MysGeetestSession.py', shellOptions);
             const validate = JSON.parse(results[0]);
 
             await e.reply('[荷花插件] 验证成功！正在重新提交请求...', true);
