@@ -2,16 +2,16 @@ import plugin from '../../../lib/plugins/plugin.js';
 import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
-import { GeetestSolver } from '../model/GeetestSolver.js';
-import MysApi from '../model/MysApi.js';
+import { PythonShell } from 'python-shell';
 
 const botRoot = path.resolve(process.cwd());
+const lotusPluginRoot = path.join(botRoot, 'plugins', 'Lotus-Plugin');
 
 export class autoVerify extends plugin {
     constructor() {
         super({
             name: '[荷花插件] 自动过码服务',
-            dsc: '拦截需要验证的米游社请求并自动处理',
+            dsc: '拦截需要验证的米游社请求并自动处理 (geetest-crack)',
             event: 'message',
             priority: 100,
         });
@@ -32,24 +32,16 @@ export class autoVerify extends plugin {
             }
         ];
 
-        this.solver = null;
         this.pythonCmd = null;
         this.isInstalling = false;
     }
-
-    async init() {
-        const playwrightRootPath = path.join(botRoot, 'node_modules', 'playwright');
-        if (!fs.existsSync(playwrightRootPath)) {
-            logger.warn('[荷花插件] 检测到 Playwright 依赖未安装，请主人发送 #注册过码环境 进行初始化。');
-        }
-    }
-
+    
     async installEnv(e) {
         if (this.isInstalling) {
             return e.reply('[荷花插件] 正在安装中，请勿重复执行...');
         }
         this.isInstalling = true;
-        await e.reply('[荷花插件] 开始注册过码环境，过程可能需要几分钟，请耐心等待...');
+        await e.reply('[荷花插件] 开始注册过码环境，将安装Python依赖，请稍候...');
 
         try {
             const pythonCmd = await this.getPythonCommand();
@@ -57,35 +49,20 @@ export class autoVerify extends plugin {
                 throw new Error('未找到Python环境，请先安装Python并配置好环境变量。');
             }
 
-            await e.reply('[荷花插件] 步骤 1/2: 正在安装Python依赖 (ddddocr)...');
+            const requirementsPath = path.join(lotusPluginRoot, 'geetest-crack', 'requirements.txt');
+            if (!fs.existsSync(requirementsPath)) {
+                throw new Error("未找到 geetest-crack/requirements.txt，请确认已正确添加submodule。");
+            }
+            
+            await e.reply('[荷花插件] 正在安装 geetest-crack 所需的Python库...');
             await new Promise((resolve, reject) => {
-                const pip = spawn(pythonCmd, ['-m', 'pip', 'install', '-U', 'ddddocr']);
+                const pip = spawn(pythonCmd, ['-m', 'pip', 'install', '-r', requirementsPath]);
                 pip.stdout.on('data', (data) => logger.info(`[荷花插件][pip install]: ${data.toString()}`));
                 pip.stderr.on('data', (data) => logger.error(`[荷花插件][pip install]: ${data.toString()}`));
                 pip.on('error', reject);
                 pip.on('close', code => code === 0 ? resolve() : reject(new Error(`Pip进程退出，代码: ${code}`)));
             });
-            await e.reply('[荷花插件] Python依赖安装成功！');
-
-            await e.reply('[荷花插件] 步骤 2/2: 正在安装浏览器核心 (Playwright & Chromium)...');
-            
-            const playwrightCliPath = path.join(botRoot, 'node_modules', 'playwright', 'cli.js');
-            
-            if (!fs.existsSync(playwrightCliPath)) {
-                throw new Error("Playwright CLI 未找到。请确保已在机器人主目录执行 'yarn install' 且依赖安装无误。");
-            }
-            
-            await new Promise((resolve, reject) => {
-                const playwright = spawn('node', [playwrightCliPath, 'install', 'chromium'], { 
-                    cwd: botRoot,
-                    shell: false 
-                });
-                playwright.stdout.on('data', (data) => logger.info(`[荷花插件][Playwright]: ${data.toString()}`));
-                playwright.stderr.on('data', (data) => logger.error(`[荷花插件][Playwright]: ${data.toString()}`));
-                playwright.on('error', reject);
-                playwright.on('close', code => code === 0 ? resolve() : reject(new Error(`Playwright进程退出，代码: ${code}`)));
-            });
-            await e.reply('[荷花插件] 过码环境全部注册成功！本插件将自动工作。');
+            await e.reply('[荷花插件] 过码环境依赖安装成功！本插件将自动工作。');
 
         } catch (error) {
             logger.error(`[荷花插件] 环境注册失败:`, error);
@@ -110,23 +87,18 @@ export class autoVerify extends plugin {
         }
         e.isVerifying = true;
 
-        logger.info(`[荷花插件][自动过码] [uid:${mysApi.uid}] 拦截到验证请求 (retcode: 1034)，开始自动处理...`);
+        logger.info(`[荷花插件][自动过码] [uid:${mysApi.uid}] 拦截到验证请求 (retcode: 1034)，开始使用 geetest-crack 处理...`);
         await e.reply('[荷花插件] 检测到需要安全验证，正在尝试自动处理...', true);
 
-        if (!this.solver) {
-             const pythonCmd = await this.getPythonCommand();
-             if (!pythonCmd) {
-                await e.reply('[荷花插件] 自动验证失败：Python环境未就绪，请联系管理员。');
-                delete e.isVerifying;
-                return reject();
-             }
-             this.solver = new GeetestSolver({ pythonCmd });
+        const pythonCmd = await this.getPythonCommand();
+        if (!pythonCmd) {
+           await e.reply('[荷花插件] 自动验证失败：Python环境未就绪，请联系管理员。');
+           delete e.isVerifying;
+           return reject();
         }
         
-        const verificationApi = new MysApi(mysApi.uid, mysApi.cookie);
-        const create = await verificationApi.getData('createVerification');
-        
-        if (!create || create?.retcode !== 0) {
+        const create = await mysApi.getData('createVerification', {is_high:false});
+        if (create?.retcode !== 0) {
             logger.error(`[荷花插件][自动过码] 获取 gt challenge 失败，米游社返回: ${JSON.stringify(create)}`);
             await e.reply(`[荷花插件] 自动验证失败：无法获取验证码凭证(${create?.message || '返回内容不符合预期'})`);
             delete e.isVerifying;
@@ -134,28 +106,40 @@ export class autoVerify extends plugin {
         }
 
         const { gt, challenge } = create.data;
-        const result = await this.solver.solve(gt, challenge, mysApi.uid);
         
-        if (!result.success) {
-            await e.reply(`[荷花插件] 自动验证失败: ${result.message}\n请联系管理员。`);
+        try {
+            const options = {
+                mode: 'text',
+                pythonPath: pythonCmd,
+                pythonOptions: ['-u'],
+                scriptPath: path.join(lotusPluginRoot, 'model'),
+                args: [gt, challenge]
+            };
+            
+            const results = await PythonShell.run('run_crack.py', options);
+            const validate = JSON.parse(results[0]);
+
+            await e.reply('[荷花插件] 验证成功！正在重新提交请求...', true);
+            
+            const finalRes = await mysApi.getData(type, { ...data, headers: { 'x-rpc-validate': validate.geetest_validate, 'x-rpc-challenge': validate.geetest_challenge, 'x-rpc-seccode': validate.geetest_seccode } });
+            
+            delete e.isVerifying;
+            
+            if (finalRes.retcode !== 0) {
+                logger.error(`[荷花插件][自动过码] [uid:${mysApi.uid}] 使用 validate 重新请求失败: ${finalRes.message}`);
+                await e.reply(`[荷花插件] 自动验证已通过，但后续请求失败: ${finalRes.message}`);
+                return reject();
+            }
+            
+            logger.mark(`[荷花插件][自动过码] [uid:${mysApi.uid}] 验证流程成功，请求已放行。`);
+            return finalRes;
+
+        } catch (error) {
+            logger.error(`[荷花插件][自动过码] [uid:${mysApi.uid}] geetest-crack 破解失败:`, error);
+            await e.reply(`[荷花插件] 自动验证失败: 破解脚本执行出错，请检查日志。\n${error.message}`);
             delete e.isVerifying;
             return reject();
         }
-
-        await e.reply('[荷花插件] 验证成功！正在重新提交请求...', true);
-        
-        const finalRes = await mysApi.getData(type, { ...data, headers: { 'x-rpc-validate': result.validate.geetest_validate, 'x-rpc-challenge': result.validate.geetest_challenge, 'x-rpc-seccode': `${result.validate.geetest_validate}|jordan` } });
-        
-        delete e.isVerifying;
-        
-        if (finalRes.retcode !== 0) {
-            logger.error(`[荷花插件][自动过码] [uid:${mysApi.uid}] 使用 validate 重新请求失败: ${finalRes.message}`);
-            await e.reply(`[荷花插件] 自动验证已通过，但后续请求失败: ${finalRes.message}`);
-            return reject();
-        }
-        
-        logger.mark(`[荷花插件][自动过码] [uid:${mysApi.uid}] 验证流程成功，请求已放行。`);
-        return finalRes;
     }
     
     async getPythonCommand() {

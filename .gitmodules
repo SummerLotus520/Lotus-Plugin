@@ -1,3 +1,6 @@
 [submodule "MihoyoBBSTools"]
 	path = MihoyoBBSTools
 	url = https://github.com/Womsxd/MihoyoBBSTools.git
+[submodule "geetest-crack"]
+	path = geetest-crack
+	url = https://github.com/yanglbme/geetest-crack.git
