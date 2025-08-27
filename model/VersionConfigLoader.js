@@ -3,7 +3,7 @@ import path from "node:path";
 import YAML from "yaml";
 import chokidar from "chokidar";
 
-const pluginName = "荷花插件";
+const pluginName = "Lotus-Plugin";
 const pluginRoot = path.resolve(process.cwd(), 'plugins', pluginName);
 const configDir = path.join(pluginRoot, "config");
 
