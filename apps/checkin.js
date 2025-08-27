@@ -40,6 +40,7 @@ export class lotusCheckin extends plugin {
                 { reg: '^#初始化签到环境$', fnc: 'initialize', permission: 'master' },
                 { reg: '^#(测试|开始)签到$', fnc: 'runCheckin', permission: 'master' },
                 { reg: '^#批量刷新签到$', fnc: 'batchRefresh', permission: 'master' },
+                { reg: '^#注册本群签到$', fnc: 'registerGroup', permission: 'master' },
                 { reg: '^#自动签到日志$', fnc: 'getLatestLog', permission: 'master' }
             ]
         });
@@ -321,8 +322,8 @@ export class lotusCheckin extends plugin {
         }
 
         const data = await getRefreshedCookieAndStoken(userId);
-        if (!data) {
-            logger.warn(`[荷花插件] 为用户[${userId}]获取CK/Stoken失败。`);
+
+        if (!data || !data.stoken) {
             return false;
         }
 
@@ -337,7 +338,6 @@ export class lotusCheckin extends plugin {
             
             const userConfigFile = path.join(bbsConfigPath, `${userId}.yaml`);
             fs.writeFileSync(userConfigFile, YAML.stringify(template), 'utf8');
-            logger.info(`[荷花插件] 已成功更新用户[${userId}]的签到配置。`);
             return true;
         } catch (error) {
             logger.error(`[荷花插件] 写入用户[${userId}]配置失败:`, error);
@@ -397,6 +397,44 @@ export class lotusCheckin extends plugin {
                 });
             });
         }
+        return true;
+    }
+    
+    async registerGroup(e) {
+        if (!e.isGroup) {
+            await e.reply('[荷花插件] 此指令只能在群聊中使用。');
+            return true;
+        }
+        
+        const memberMap = await e.group.getMemberMap();
+        const memberIds = Array.from(memberMap.keys()).filter(id => id != e.self_id);
+        const totalMembersToProcess = memberIds.length;
+    
+        if (totalMembersToProcess === 0) {
+            await e.reply('[荷花插件] 群里除了我没有其他人了...');
+            return true;
+        }
+    
+        await e.reply(`[荷花插件] 开始为本群 ${totalMembersToProcess} 位成员批量注册/刷新签到...\n请耐心等待，这可能需要一些时间。`);
+        logger.info(`[荷花插件] 开始为群[${e.group_id}]的 ${totalMembersToProcess} 位成员批量注册/刷新签到...`);
+    
+        let successCount = 0;
+        let failureCount = 0;
+        
+        for (const userId of memberIds) {
+            const success = await this._updateSingleUser(userId);
+            if (success) {
+                successCount++;
+            } else {
+                failureCount++;
+            }
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+    
+        const summary = `[荷花插件] 本群签到批量处理完成！\n总人数: ${totalMembersToProcess}\n成功: ${successCount}\n失败: ${failureCount}`;
+        await e.reply(summary);
+        logger.info(`[荷花插件] 群[${e.group_id}]签到批量处理完成！总: ${totalMembersToProcess}, 成功: ${successCount}, 失败: ${failureCount}`);
+    
         return true;
     }
 

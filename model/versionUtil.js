@@ -40,11 +40,9 @@ export const getGameApiUrl = (gameId) => {
 
 export const getRedisKeys = (gameId) => {
   const prefix = GAME_CONFIG[gameId]?.redisPrefix || "GAME";
-  const baseKey = `Yz:Lotus:Push:${prefix}`;
+  const baseKey = `Yz:Lotus:Version:${prefix}`;
   return {
     main: `${baseKey}:Main:Version`,
-    pre: `${baseKey}:Pre:Version`,
     mainDate: `${baseKey}:Main:UpdateDate`,
-    preDate: `${baseKey}:Pre:UpdateDate`
   };
 };
