@@ -1,23 +1,58 @@
-# 荷花插件配置文件
+# 荷花插件主配置文件
 
-# 自动签到执行时间，使用Cron表达式
-# 默认每天0点5分执行
+# ---------------- 自动签到配置 ----------------
+# 自动签到执行时间，使用Cron表达式 (格式: 秒 分 时 日 月 周)
 schedule: "5 0 * * *"
-
-# 是否在机器人重启后，自动补签错过的任务
-# true: 开启 (默认)
-# false: 关闭
+# 是否在机器人重启后，自动补签错过的任务 (true: 开启, false: 关闭)
 autoCatchUp: true
-
 # 自动刷新配置
 autoRefresh:
-  # 是否启用自动批量刷新, true为开启, false为关闭
+  # 是否启用自动批量刷新 (true: 开启, false: 关闭)
   enabled: false
-  # 自动刷新执行时间 (cron表达式, 格式: 秒 分 时 日 月 周)
-  # 推荐设置为每周或每几天执行一次，例如每周日凌晨5点: '0 0 5 * * 0'
+  # 自动刷新执行时间 (Cron表达式)
   schedule: '0 4 * * *'
-
-# 日志文件保留天数
-# 插件启动时会自动删除超出此天数的旧日志
-# 设置为 0 或负数则禁用自动删除
+# 日志文件保留天数 (设置为 0 或负数则禁用自动删除)
 logRetentionDays: 7
+# 签到权限控制
+permissionControl:
+  # 模式: "blacklist" - 黑名单模式 (默认), "whitelist" - 白名单模式
+  mode: "blacklist"
+  # 白名单QQ列表
+  whitelist: []
+  # 黑名单QQ列表
+  blacklist: []
+
+# ---------------- B站解析配置 ----------------
+bilibili:
+  # [手动配置] 登录B站后获取的SESSDATA。优先级最高，会覆盖BBDown的自动获取。
+  sessData: ""
+  # [核心配置] 是否优先使用 BBDown 进行下载 (需要服务器已安装BBDown)。启用后可解析会员内容。
+  useBBDown: true
+  # [BBDown专属] 使用BBDown时，是否调用aria2c进行加速 (需要服务器已安装aria2c)。
+  useAria2: true
+  # [核心配置] 默认下载画质。对BBDown和API模式都有效。可选值: 120(4K), 116(1080P60), 80(1080P), 64(720P), 16(360P)等。
+  resolution: 64
+  # [核心配置] 视频时长限制（秒），超过则只发信息不发视频。
+  durationLimit: 3600
+  # [核心配置] 单个视频文件大小限制（MB），超过此大小将尝试作为文件发送。
+  videoSizeLimit: 100
+  # [核心配置] 多P视频的处理策略。可选值:
+  # "zip": (默认) 将所有分P打包成一个zip文件发送。
+  # "all": 逐个发送所有分P视频。
+  # "first": 只发送P1视频。
+  multiPagePolicy: "zip"
+  # [缓存配置] 是否启用视频文件缓存 (true: 开启, false: 关闭)
+  enableCache: true
+  # [缓存配置] 缓存有效时间（秒）。文件在被访问后，会在此时间段内被保留，过期后由定时任务自动清理。
+  cacheTTL: 3600
+  
+# ---------------- 外部工具路径 ----------------
+external_tools:
+  # [重要] 存放 BBDown.exe, ffmpeg.exe 等外部工具的文件夹绝对路径。
+  # Windows示例: "D:/Apps/ffmpeg", Linux示例: "/usr/local/bin"
+  toolsPath: ""
+
+# ---------------- 通用配置 ----------------
+general:
+  # 解析成功时消息的前缀
+  identifyPrefix: "[荷花解析]"
