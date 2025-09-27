@@ -20,6 +20,8 @@
     "lodash": "^4.17.21",
     "node-fetch": "^3.3.2",
     "qrcode": "^1.5.3",
+    "jszip": "^3.10.1",
+    "csv-stringify": "^6.4.5" ,
     "yaml": "^2.4.5"
   }
 }

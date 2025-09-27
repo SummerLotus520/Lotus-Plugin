@@ -20,7 +20,7 @@ const _path = process.cwd();
 const lotusPluginRoot = path.join(_path, 'plugins', 'Lotus-Plugin');
 const bbsToolsPath = path.join(lotusPluginRoot, 'MihoyoBBSTools');
 const bbsConfigPath = path.join(bbsToolsPath, 'config');
-const templatePath = path.join(lotusPluginRoot, 'config', 'template.yaml');
+const templatePath = path.join(lotusPluginRoot, 'config', 'template.yaml'); 
 const pluginConfigPath = path.join(lotusPluginRoot, 'config', 'config.yaml');
 const dataDir = path.join(lotusPluginRoot, 'data');
 const logArchiveDir = path.join(dataDir, 'logs');
@@ -41,7 +41,11 @@ export class lotusCheckin extends plugin {
                 { reg: '^#(测试|开始)签到$', fnc: 'runCheckin', permission: 'master' },
                 { reg: '^#批量刷新签到$', fnc: 'batchRefresh', permission: 'master' },
                 { reg: '^#注册本群签到$', fnc: 'registerGroup', permission: 'master' },
-                { reg: '^#自动签到日志$', fnc: 'getLatestLog', permission: 'master' }
+                { reg: '^#自动签到日志$', fnc: 'getLatestLog', permission: 'master' },
+                { reg: '^#启用社区签到$', fnc: 'enableCommunitySignIn', permission: 'master' },
+                { reg: '^#自动签到(黑|白)名单$', fnc: 'switchPermissionMode', permission: 'master' },
+                { reg: '^#(添加|删除)(黑|白)名单(.*)$', fnc: 'updatePermissionList', permission: 'master' },
+                { reg: '^#签到名单列表$', fnc: 'viewPermissionLists', permission: 'master' }
             ]
         });
 
@@ -49,12 +53,158 @@ export class lotusCheckin extends plugin {
         
         this.task = null;
         this.refreshTask = null;
+        this.xiaoyaocvsCheckTask = null;
         this.commandsAndEnv = null;
+        this.pluginConfig = {};
         
         this.checkAndCreateConfig();
         this.runStartupSequence();
 
         global.lotusPluginLoaded = true;
+    }
+    
+    _loadPluginConfig() {
+        try {
+            const configContent = fs.readFileSync(pluginConfigPath, 'utf8');
+            this.pluginConfig = YAML.parse(configContent);
+        } catch (error) {
+            logger.error('[荷花插件] 加载 config.yaml 失败:', error);
+            this.pluginConfig = {};
+        }
+        if (!this.pluginConfig.permissionControl) {
+            this.pluginConfig.permissionControl = { mode: 'blacklist', whitelist: [], blacklist: [] };
+        }
+    }
+
+    _savePluginConfig() {
+        try {
+            fs.writeFileSync(pluginConfigPath, YAML.stringify(this.pluginConfig), 'utf8');
+            return true;
+        } catch (error) {
+            logger.error('[荷花插件] 保存 config.yaml 失败:', error);
+            return false;
+        }
+    }
+    
+    checkPermission(userId) {
+        this._loadPluginConfig();
+        const pc = this.pluginConfig.permissionControl;
+        if (!pc || !pc.mode) return true;
+
+        const userIdStr = String(userId);
+        
+        if (pc.mode === 'whitelist') {
+            return (pc.whitelist || []).map(String).includes(userIdStr);
+        } else {
+            return !(pc.blacklist || []).map(String).includes(userIdStr);
+        }
+    }
+    
+    async switchPermissionMode(e) {
+        this._loadPluginConfig();
+        const mode = e.msg.includes('白') ? 'whitelist' : 'blacklist';
+        this.pluginConfig.permissionControl.mode = mode;
+        if (this._savePluginConfig()) {
+            await e.reply(`[荷花插件] 签到模式已切换为: ${mode === 'whitelist' ? '白名单模式' : '黑名单模式'}`);
+        } else {
+            await e.reply('[荷花插件] 切换模式失败，请查看日志。');
+        }
+        return true;
+    }
+
+    async updatePermissionList(e) {
+        this._loadPluginConfig();
+        const action = e.msg.includes('添加') ? 'add' : 'remove';
+        const listType = e.msg.includes('白') ? 'whitelist' : 'blacklist';
+        
+        const userId = (e.at || String(e.msg).match(/\d{5,12}/)?.[0] || '').trim();
+
+        if (!userId) {
+            return e.reply('[荷花插件] 未能识别到有效的QQ号。');
+        }
+
+        if (!this.pluginConfig.permissionControl[listType]) {
+            this.pluginConfig.permissionControl[listType] = [];
+        }
+
+        const list = this.pluginConfig.permissionControl[listType].map(String);
+        const userExists = list.includes(userId);
+
+        let replyMsg = '';
+
+        if (action === 'add') {
+            if (userExists) {
+                replyMsg = `用户 ${userId} 已存在于${listType === 'whitelist' ? '白' : '黑'}名单中。`;
+            } else {
+                this.pluginConfig.permissionControl[listType].push(Number(userId));
+                replyMsg = `已将用户 ${userId} 添加到${listType === 'whitelist' ? '白' : '黑'}名单。`;
+            }
+        } else {
+            if (!userExists) {
+                replyMsg = `用户 ${userId} 不在${listType === 'whitelist' ? '白' : '黑'}名单中。`;
+            } else {
+                this.pluginConfig.permissionControl[listType] = this.pluginConfig.permissionControl[listType].filter(id => String(id) !== userId);
+                replyMsg = `已从${listType === 'whitelist' ? '白' : '黑'}名单中删除用户 ${userId}。`;
+            }
+        }
+        
+        if (this._savePluginConfig()) {
+            await e.reply(`[荷花插件] ${replyMsg}`);
+        } else {
+            await e.reply('[荷花插件] 更新名单失败，请查看日志。');
+        }
+        return true;
+    }
+    
+    async viewPermissionLists(e) {
+        this._loadPluginConfig();
+        const pc = this.pluginConfig.permissionControl;
+        const modeText = pc.mode === 'whitelist' ? '白名单模式' : '黑名单模式 (默认)';
+        const whitelistText = (pc.whitelist || []).length > 0 ? pc.whitelist.join('\n') : '无';
+        const blacklistText = (pc.blacklist || []).length > 0 ? pc.blacklist.join('\n') : '无';
+
+        const replyMsg = `--- 签到权限名单 ---\n当前模式: ${modeText}\n\n--- 白名单 ---\n${whitelistText}\n\n--- 黑名单 ---\n${blacklistText}`;
+        await e.reply(replyMsg);
+        return true;
+    }
+
+    async enableCommunitySignIn (e) {
+        await e.reply('[荷花插件] 开始启用社区BBS签到模式...');
+
+        try {
+            const captchaSrcPath = path.join(lotusPluginRoot, 'config', 'captcha.py');
+            const captchaDestPath = path.join(bbsToolsPath, 'captcha.py');
+            if (!fs.existsSync(captchaSrcPath)) {
+                await e.reply('[荷花插件] 错误: 未在 config 目录下找到 captcha.py 文件。');
+                return true;
+            }
+            fs.copyFileSync(captchaSrcPath, captchaDestPath);
+
+            const currentTemplatePath = path.join(lotusPluginRoot, 'config', 'template.yaml');
+            const bbsTemplatePath = path.join(lotusPluginRoot, 'config', 'template-bbs.yaml');
+            const backupTemplatePath = path.join(lotusPluginRoot, 'config', 'template-nonbbs.yaml');
+
+            if (!fs.existsSync(bbsTemplatePath)) {
+                await e.reply('[荷花插件] 错误: 未在 config 目录下找到 template-bbs.yaml 预设文件。');
+                return true;
+            }
+            if (fs.existsSync(currentTemplatePath)) {
+                fs.renameSync(currentTemplatePath, backupTemplatePath);
+            }
+            fs.renameSync(bbsTemplatePath, currentTemplatePath);
+            
+            await e.reply('[荷花插件] 文件切换成功！\n • captcha.py 已覆盖\n • template.yaml 已切换为BBS模式');
+        
+        } catch (error) {
+            logger.error('[荷花插件] 启用社区签到文件操作失败:', error);
+            await e.reply('[荷花插件] 文件操作失败，请检查文件是否存在或权限是否正确。');
+            return true;
+        }
+        
+        await e.reply('[荷花插件] 正在基于新模板批量刷新所有用户配置...');
+        await this.batchRefresh(e);
+        
+        return true;
     }
 
     checkAndCreateConfig() {
@@ -68,18 +218,44 @@ export class lotusCheckin extends plugin {
             fs.mkdirSync(logArchiveDir, { recursive: true });
         }
     }
+    
+    runStartupCleanup(logBlock) {
+        this._loadPluginConfig();
+        if (!fs.existsSync(bbsConfigPath)) {
+            logBlock.push('[清理] 签到配置目录不存在，跳过权限清理。');
+            return;
+        }
+
+        const files = fs.readdirSync(bbsConfigPath);
+        const userIds = files.filter(f => f.endsWith('.yaml')).map(f => path.parse(f).name).filter(name => /^\d+$/.test(name));
+        let deletedCount = 0;
+
+        for (const userId of userIds) {
+            if (!this.checkPermission(userId)) {
+                try {
+                    fs.unlinkSync(path.join(bbsConfigPath, `${userId}.yaml`));
+                    deletedCount++;
+                } catch (error) {
+                    logger.error(`[荷花插件] 删除用户[${userId}]的无效配置时出错:`, error);
+                }
+            }
+        }
+        logBlock.push(`[清理] 权限清理完成, 共删除 ${deletedCount} 个不符合规则的用户配置。`);
+    }
 
     runStartupSequence() {
         const logBlock = ['--- 荷花插件 Lotus-Plugin ---'];
         
         try {
-            const pluginConfig = YAML.parse(fs.readFileSync(pluginConfigPath, 'utf8'));
+            this._loadPluginConfig();
             
-            this.setupScheduler(pluginConfig, logBlock);
-            this.setupRefreshScheduler(pluginConfig, logBlock);
-            this.cleanupOldLogs(pluginConfig, logBlock);
+            this.setupScheduler(this.pluginConfig, logBlock);
+            this.setupRefreshScheduler(this.pluginConfig, logBlock);
+            this.cleanupOldLogs(this.pluginConfig, logBlock);
+            this.runStartupCleanup(logBlock);
+            this.setupXiaoyaoCvsCheckScheduler(logBlock);
 
-            if (pluginConfig.autoCatchUp !== true) {
+            if (this.pluginConfig.autoCatchUp !== true) {
                 logBlock.push('[补签] 功能已禁用 (可在config.yaml中开启)');
             } else {
                 const today = new Date().toLocaleDateString('sv-SE');
@@ -88,7 +264,7 @@ export class lotusCheckin extends plugin {
                 if (lastRunDate === today) {
                     logBlock.push('[补签] 今日任务已执行，无需补签。');
                 } else {
-                    const scheduleParts = pluginConfig.schedule.split(' ');
+                    const scheduleParts = this.pluginConfig.schedule.split(' ');
                     const scheduledHour = parseInt(scheduleParts[2], 10);
                     const scheduledMinute = parseInt(scheduleParts[1], 10);
                     
@@ -137,6 +313,52 @@ export class lotusCheckin extends plugin {
             this.batchRefresh(null);
         });
         logBlock.push(`[任务] 定时批量刷新已安排, 执行时间: ${pluginConfig.autoRefresh.schedule}`);
+    }
+    
+    setupXiaoyaoCvsCheckScheduler(logBlock) {
+        if (this.xiaoyaocvsCheckTask) this.xiaoyaocvsCheckTask.cancel();
+
+        this._checkXiaoyaoCvsPluginSource();
+        
+        this.xiaoyaocvsCheckTask = schedule.scheduleJob('0 */15 * * * *', () => {
+            this._checkXiaoyaoCvsPluginSource();
+        });
+
+        setTimeout(() => {
+            if (this.xiaoyaocvsCheckTask) {
+                this.xiaoyaocvsCheckTask.cancel();
+                logger.info('[荷花插件] 依赖插件源的初期密集检查已结束。');
+            }
+        }, 60 * 60 * 1000);
+
+        logBlock.push(`[任务] 依赖插件源检查已启动 (启动后1小时内每15分钟)`);
+    }
+
+    _checkXiaoyaoCvsPluginSource() {
+        const cvsPluginPath = path.join(_path, 'plugins', 'xiaoyao-cvs-plugin');
+        const gitConfigPath = path.join(cvsPluginPath, '.git', 'config');
+
+        if (!fs.existsSync(gitConfigPath)) {
+            return;
+        }
+        try {
+            const configContent = fs.readFileSync(gitConfigPath, 'utf8');
+            const lines = configContent.split('\n');
+            let url = '';
+            for (const line of lines) {
+                const trimmedLine = line.trim();
+                if (trimmedLine.startsWith('url =')) {
+                    url = trimmedLine.substring(6).trim();
+                    break;
+                }
+            }
+            
+            if (url && !url.includes('SummerLotus520')) {
+                logger.warn('[荷花插件]检测到这个插件 (xiaoyao-cvs-plugin) 未换源！请执行换源操作');
+            }
+        } catch (error) {
+            logger.warn(`[荷花插件] 检查 xiaoyao-cvs-plugin 源时发生错误: ${error.message}`);
+        }
     }
 
     cleanupOldLogs(pluginConfig, logBlock) {
@@ -289,6 +511,9 @@ export class lotusCheckin extends plugin {
     }
 
     async register(e) {
+        if (!this.checkPermission(e.user_id)) {
+            return e.reply('[荷花插件] 抱歉，您没有权限注册自动签到。');
+        }
         const userConfigFile = path.join(bbsConfigPath, `${e.user_id}.yaml`);
         if (fs.existsSync(userConfigFile)) {
             return e.reply("您已注册过，如需更新Cookie，请发送 #刷新自动签到");
@@ -297,6 +522,9 @@ export class lotusCheckin extends plugin {
     }
 
     async refresh(e) {
+        if (!this.checkPermission(e.user_id)) {
+            return e.reply('[荷花插件] 抱歉，您没有权限刷新自动签到。');
+        }
         await this.updateUserData(e);
     }
     
@@ -329,7 +557,7 @@ export class lotusCheckin extends plugin {
 
         try {
             if (!fs.existsSync(bbsConfigPath)) fs.mkdirSync(bbsConfigPath, { recursive: true });
-
+            
             const template = YAML.parse(fs.readFileSync(templatePath, 'utf8'));
             template.account.cookie = data.cookie;
             template.account.stuid = data.stuid;
@@ -422,6 +650,9 @@ export class lotusCheckin extends plugin {
         let failureCount = 0;
         
         for (const userId of memberIds) {
+            if (!this.checkPermission(userId)) {
+                continue;
+            }
             const success = await this._updateSingleUser(userId);
             if (success) {
                 successCount++;
@@ -431,7 +662,7 @@ export class lotusCheckin extends plugin {
             await new Promise(resolve => setTimeout(resolve, 500));
         }
     
-        const summary = `[荷花插件] 本群签到批量处理完成！\n总人数: ${totalMembersToProcess}\n成功: ${successCount}\n失败: ${failureCount}`;
+        const summary = `[荷花插件] 本群签到批量处理完成！\n总人数: ${totalMembersToProcess}\n符合权限人数: ${successCount + failureCount}\n成功: ${successCount}\n失败: ${failureCount}`;
         await e.reply(summary);
         logger.info(`[荷花插件] 群[${e.group_id}]签到批量处理完成！总: ${totalMembersToProcess}, 成功: ${successCount}, 失败: ${failureCount}`);
     
