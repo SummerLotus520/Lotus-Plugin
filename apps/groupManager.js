@@ -12,108 +12,41 @@ export class groupManager extends plugin {
     constructor() {
         super({
             name: '[荷花插件] 群组管理',
-            dsc: '管理和导出群信息，处理退群事件',
-            event: 'message',
+            dsc: '获取群成员列表，并处理退群事件',
+            event: 'message', // 恢复为 message 以响应指令
             priority: 240,
             rule: [
-                { reg: '^#(Lotus)?群列表$', fnc: 'sendGroupListFile', permission: 'master' },
-                { reg: '^#(Lotus)?群成员 ?(\\d+)$', fnc: 'sendGroupMembersFile', permission: 'master' },
-                { reg: '^#(Lotus)?刷新列表$', fnc: 'refreshAllLists', permission: 'master' }
+                { reg: '^#(Lotus)?群成员 ?(\\d*)$', fnc: 'sendGroupMembersFile', permission: 'master' }
             ]
         });
+        
+        this.init();
     }
     
     async init() {
         if (!fs.existsSync(dataDir)) {
             fs.mkdirSync(dataDir, { recursive: true });
         }
-        logger.info('[荷花插件] 群组管理器已初始化。');
-    }
-    
-    async refreshAllLists(e) {
-        await e.reply('[荷花插件] 开始刷新所有群组和成员列表，这可能需要一些时间...');
-        const groupMap = Bot.gl;
-        if (!groupMap || groupMap.size === 0) {
-            return e.reply('[荷花插件] 未获取到任何群信息，无法刷新。');
-        }
-        
-        let successCount = 0;
-        let groupListSuccess = false;
-
-        if (await this.generateGroupListFile()) {
-            groupListSuccess = true;
-        }
-
-        for (const [groupId, group] of groupMap) {
-            if (await this.generateGroupMembersFile(groupId)) {
-                successCount++;
-            }
-        }
-        
-        let replyMsg = '[荷花插件] 刷新任务完成。\n';
-        replyMsg += `群列表: ${groupListSuccess ? '成功' : '失败'}\n`;
-        replyMsg += `群成员列表: 成功 ${successCount} / 总计 ${groupMap.size}`;
-        
-        await e.reply(replyMsg);
-        return true;
-    }
-
-    async sendGroupListFile(e) {
-        await e.reply('[荷花插件] 正在准备群列表文件...');
-        if (await this.generateGroupListFile()) {
-            const filePath = path.join(dataDir, 'Groups.csv');
-            await this.sendFile(e, filePath, 'Groups.csv');
-        } else {
-            await e.reply('[荷花插件] 生成群列表文件失败，请查看日志。');
-        }
-        return true;
-    }
-
-    async generateGroupListFile() {
-        const groupMap = Bot.gl;
-        if (!groupMap || groupMap.size === 0) {
-            logger.warn('[荷花插件] 未获取到任何群信息。');
-            return false;
-        }
-
-        const data = [['群号', '群名称', '群主ID', '管理员人数', '总人数']];
-        for (const [groupId, group] of groupMap) {
-            try {
-                const memberMap = await group.getMemberMap();
-                const adminCount = Array.from(memberMap.values()).filter(member => member.is_admin).length;
-                data.push([
-                    String(group.group_id),
-                    group.name,
-                    String(group.owner_id),
-                    adminCount,
-                    memberMap.size
-                ]);
-            } catch (error) {
-                 logger.warn(`[荷花插件] (生成群列表时) 获取群 ${groupId} 信息失败，跳过。`);
-            }
-        }
-
-        try {
-            const csvString = stringify(data);
-            const filePath = path.join(dataDir, 'Groups.csv');
-            fs.writeFileSync(filePath, csvString);
-            return true;
-        } catch (error) {
-            logger.error('[荷花插件] 写入 Groups.csv 文件失败:', error);
-            return false;
-        }
+        logger.info('[荷花插件] 群组管理器已加载。');
     }
     
     async sendGroupMembersFile(e) {
-        const groupId = e.msg.match(/\d+/)?.[0];
+        let groupId = e.msg.match(/\d+/)?.[0];
+
         if (!groupId) {
-            return e.reply('[荷花插件] 未能识别到有效的群号。');
+            if (e.isGroup) {
+                groupId = String(e.group_id);
+                await e.reply(`未指定群号，将默认使用当前群: ${groupId}`);
+            } else {
+                return e.reply('[荷花插件] 请输入群号，或在群聊中使用此指令以获取当前群成员列表。');
+            }
         }
         
         await e.reply(`[荷花插件] 正在准备群 ${groupId} 的成员列表文件...`);
         if (await this.generateGroupMembersFile(groupId)) {
             const fileName = `${groupId}.csv`;
             const filePath = path.join(dataDir, fileName);
+            await e.reply('【重要提示】请使用 VSCode、Notepad++ 或其他专业文本编辑器打开CSV文件，直接用Excel打开可能会因编码问题导致乱码！');
             await this.sendFile(e, filePath, fileName);
         } else {
             await e.reply(`[荷花插件] 生成群 ${groupId} 的成员列表失败，机器人可能不在该群或获取信息时出错。`);
@@ -145,7 +78,7 @@ export class groupManager extends plugin {
             const csvString = stringify(data);
             const fileName = `${groupId}.csv`;
             const filePath = path.join(dataDir, fileName);
-            fs.writeFileSync(filePath, csvString);
+            fs.writeFileSync(filePath, csvString, { encoding: 'utf-8' });
             return true;
         } catch (error) {
             logger.error(`[荷花插件] 生成群 ${groupId} 成员CSV时失败:`, error);
@@ -266,4 +199,4 @@ export class groupManager extends plugin {
             logger.error(`[荷花插件] [${reason}] 删除用户 ${userId} 的配置时出错:`, error);
         }
     }
-}   
+}

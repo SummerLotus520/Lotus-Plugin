@@ -31,7 +31,7 @@ export class BilibiliParser extends plugin {
             priority: 0,
             rule: [
                 {
-                    reg: '(bilibili.com|b23.tv|bili2233.cn|t.bilibili.com|^BV[1-9a-zA-Z]{10}$)',
+                    reg: '(bilibili.com|b23.tv|bili2233.cn|t.bilibili.com|^BV[1-9a-zA-Z]{10}$|^av[0-9]+$)',
                     fnc: 'parse'
                 },
                 { reg: '^#B站登录$', fnc: 'login', permission: 'master' }
@@ -121,7 +121,7 @@ export class BilibiliParser extends plugin {
         this.init();
         const rawMsg = e.raw_message || e.msg || "";
         const cleanMsg = rawMsg.replace(/\\\//g, '/');
-        const surgicalRegex = /(https?:\/\/(?:www\.bilibili\.com\/video\/[^"'\s,\]}]+|b23\.tv\/[^"'\s,\]}]+|live\.bilibili\.com\/[^"'\s,\]}]+))|(BV[1-9a-zA-Z]{10})/i;
+        const surgicalRegex = /(https?:\/\/(?:www\.bilibili\.com\/video\/[^"'\s,\]}]+|b23\.tv\/[^"'\s,\]}]+|live\.bilibili\.com\/[^"'\s,\]}]+))|(BV[1-9a-zA-Z]{10}|av[0-9]+)/i;
         const match = cleanMsg.match(surgicalRegex);
         if (!match) return false;
 
@@ -368,6 +368,9 @@ export class BilibiliParser extends plugin {
     }
     
     async normalizeUrl(input) {
+        if (String(input).startsWith('av')) {
+            return `https://www.bilibili.com/video/${input}`;
+        }
         if (input.startsWith('https://www.bilibili.com/video/') || input.startsWith('https://live.bilibili.com/')) {
             return input.split("?")[0];
         }
@@ -384,9 +387,15 @@ export class BilibiliParser extends plugin {
     }
     
     async getVideoInfo(url) {
-        const idMatch = url.match(/video\/([a-zA-Z0-9]+)/);
+        const idMatch = url.match(/video\/(av|BV)([a-zA-Z0-9]+)/);
         if (!idMatch) throw new Error("无法从URL中提取视频ID");
-        const apiUrl = `${BILI_VIDEO_INFO_API}?bvid=${idMatch[1]}`;
+        const idType = idMatch[1];
+        const videoId = idMatch[2];
+        
+        let apiUrl = idType.toLowerCase() === 'av' 
+            ? `${BILI_VIDEO_INFO_API}?aid=${videoId}` 
+            : `${BILI_VIDEO_INFO_API}?bvid=BV${videoId}`;
+
         const resp = await fetch(apiUrl, { headers: COMMON_HEADER });
         const respJson = await resp.json();
         if (respJson.code !== 0) throw new Error(respJson.message || '请求错误');
