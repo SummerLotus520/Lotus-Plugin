@@ -20,7 +20,7 @@ const _path = process.cwd();
 const lotusPluginRoot = path.join(_path, 'plugins', 'Lotus-Plugin');
 const bbsToolsPath = path.join(lotusPluginRoot, 'MihoyoBBSTools');
 const bbsConfigPath = path.join(bbsToolsPath, 'config');
-const templatePath = path.join(lotusPluginRoot, 'config', 'template.yaml');
+const templatePath = path.join(lotusPluginRoot, 'config', 'template.yaml'); 
 const pluginConfigPath = path.join(lotusPluginRoot, 'config', 'config.yaml');
 const dataDir = path.join(lotusPluginRoot, 'data');
 const logArchiveDir = path.join(dataDir, 'logs');
@@ -172,12 +172,12 @@ export class lotusCheckin extends plugin {
             }
             fs.copyFileSync(captchaSrcPath, captchaDestPath);
 
-            const currentTemplatePath = path.join(bbsToolsPath, 'template.yaml');
-            const bbsTemplatePath = path.join(bbsToolsPath, 'template-bbs.yaml');
-            const backupTemplatePath = path.join(bbsToolsPath, 'template-nonbbs.yaml');
+            const currentTemplatePath = path.join(lotusPluginRoot, 'config', 'template.yaml');
+            const bbsTemplatePath = path.join(lotusPluginRoot, 'config', 'template-bbs.yaml');
+            const backupTemplatePath = path.join(lotusPluginRoot, 'config', 'template-nonbbs.yaml');
 
             if (!fs.existsSync(bbsTemplatePath)) {
-                await e.reply('[荷花插件] 错误: 未在 MihoyoBBSTools 目录下找到 template-bbs.yaml 预设文件。');
+                await e.reply('[荷花插件] 错误: 未在 config 目录下找到 template-bbs.yaml 预设文件。');
                 return true;
             }
             if (fs.existsSync(currentTemplatePath)) {
