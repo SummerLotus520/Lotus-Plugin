@@ -65,7 +65,8 @@ export class lotusCheckin extends plugin {
     
     _loadPluginConfig() {
         try {
-            this.pluginConfig = YAML.parse(fs.readFileSync(pluginConfigPath, 'utf8'));
+            const configContent = fs.readFileSync(pluginConfigPath, 'utf8');
+            this.pluginConfig = YAML.parse(configContent);
         } catch (error) {
             logger.error('[荷花插件] 加载 config.yaml 失败:', error);
             this.pluginConfig = {};
@@ -73,7 +74,6 @@ export class lotusCheckin extends plugin {
         if (!this.pluginConfig.permissionControl) {
             this.pluginConfig.permissionControl = { mode: 'blacklist', whitelist: [], blacklist: [] };
         }
-        return this.pluginConfig;
     }
 
     _savePluginConfig() {
@@ -87,19 +87,21 @@ export class lotusCheckin extends plugin {
     }
     
     checkPermission(userId) {
+        this._loadPluginConfig();
         const pc = this.pluginConfig.permissionControl;
         if (!pc || !pc.mode) return true;
 
         const userIdStr = String(userId);
         
         if (pc.mode === 'whitelist') {
-            return pc.whitelist.map(String).includes(userIdStr);
+            return (pc.whitelist || []).map(String).includes(userIdStr);
         } else {
-            return !pc.blacklist.map(String).includes(userIdStr);
+            return !(pc.blacklist || []).map(String).includes(userIdStr);
         }
     }
     
     async switchPermissionMode(e) {
+        this._loadPluginConfig();
         const mode = e.msg.includes('白') ? 'whitelist' : 'blacklist';
         this.pluginConfig.permissionControl.mode = mode;
         if (this._savePluginConfig()) {
@@ -111,6 +113,7 @@ export class lotusCheckin extends plugin {
     }
 
     async updatePermissionList(e) {
+        this._loadPluginConfig();
         const action = e.msg.includes('添加') ? 'add' : 'remove';
         const listType = e.msg.includes('白') ? 'whitelist' : 'blacklist';
         
@@ -118,6 +121,10 @@ export class lotusCheckin extends plugin {
 
         if (!userId) {
             return e.reply('[荷花插件] 未能识别到有效的QQ号。');
+        }
+
+        if (!this.pluginConfig.permissionControl[listType]) {
+            this.pluginConfig.permissionControl[listType] = [];
         }
 
         const list = this.pluginConfig.permissionControl[listType].map(String);
@@ -129,14 +136,14 @@ export class lotusCheckin extends plugin {
             if (userExists) {
                 replyMsg = `用户 ${userId} 已存在于${listType === 'whitelist' ? '白' : '黑'}名单中。`;
             } else {
-                this.pluginConfig.permissionControl[listType].push(userId);
+                this.pluginConfig.permissionControl[listType].push(Number(userId));
                 replyMsg = `已将用户 ${userId} 添加到${listType === 'whitelist' ? '白' : '黑'}名单。`;
             }
         } else {
             if (!userExists) {
                 replyMsg = `用户 ${userId} 不在${listType === 'whitelist' ? '白' : '黑'}名单中。`;
             } else {
-                this.pluginConfig.permissionControl[listType] = list.filter(id => id !== userId);
+                this.pluginConfig.permissionControl[listType] = this.pluginConfig.permissionControl[listType].filter(id => String(id) !== userId);
                 replyMsg = `已从${listType === 'whitelist' ? '白' : '黑'}名单中删除用户 ${userId}。`;
             }
         }
@@ -150,10 +157,11 @@ export class lotusCheckin extends plugin {
     }
     
     async viewPermissionLists(e) {
+        this._loadPluginConfig();
         const pc = this.pluginConfig.permissionControl;
         const modeText = pc.mode === 'whitelist' ? '白名单模式' : '黑名单模式 (默认)';
-        const whitelistText = pc.whitelist.length > 0 ? pc.whitelist.join('\n') : '无';
-        const blacklistText = pc.blacklist.length > 0 ? pc.blacklist.join('\n') : '无';
+        const whitelistText = (pc.whitelist || []).length > 0 ? pc.whitelist.join('\n') : '无';
+        const blacklistText = (pc.blacklist || []).length > 0 ? pc.blacklist.join('\n') : '无';
 
         const replyMsg = `--- 签到权限名单 ---\n当前模式: ${modeText}\n\n--- 白名单 ---\n${whitelistText}\n\n--- 黑名单 ---\n${blacklistText}`;
         await e.reply(replyMsg);
@@ -212,6 +220,7 @@ export class lotusCheckin extends plugin {
     }
     
     runStartupCleanup(logBlock) {
+        this._loadPluginConfig();
         if (!fs.existsSync(bbsConfigPath)) {
             logBlock.push('[清理] 签到配置目录不存在，跳过权限清理。');
             return;
@@ -548,7 +557,7 @@ export class lotusCheckin extends plugin {
 
         try {
             if (!fs.existsSync(bbsConfigPath)) fs.mkdirSync(bbsConfigPath, { recursive: true });
-
+            
             const template = YAML.parse(fs.readFileSync(templatePath, 'utf8'));
             template.account.cookie = data.cookie;
             template.account.stuid = data.stuid;
