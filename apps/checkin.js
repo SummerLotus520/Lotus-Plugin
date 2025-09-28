@@ -45,7 +45,8 @@ export class lotusCheckin extends plugin {
                 { reg: '^#启用社区签到$', fnc: 'enableCommunitySignIn', permission: 'master' },
                 { reg: '^#自动签到(黑|白)名单$', fnc: 'switchPermissionMode', permission: 'master' },
                 { reg: '^#(添加|删除)(黑|白)名单(.*)$', fnc: 'updatePermissionList', permission: 'master' },
-                { reg: '^#签到名单列表$', fnc: 'viewPermissionLists', permission: 'master' }
+                { reg: '^#签到(黑|白)名单列表$', fnc: 'viewPermissionLists', permission: 'master' },
+                { reg: '^#签到名单列表$', fnc: 'viewGroupCheckinList', permission: 'default' }
             ]
         });
 
@@ -158,13 +159,57 @@ export class lotusCheckin extends plugin {
     
     async viewPermissionLists(e) {
         this._loadPluginConfig();
+        const listType = e.msg.includes('白') ? 'whitelist' : 'blacklist';
         const pc = this.pluginConfig.permissionControl;
-        const modeText = pc.mode === 'whitelist' ? '白名单模式' : '黑名单模式 (默认)';
-        const whitelistText = (pc.whitelist || []).length > 0 ? pc.whitelist.join('\n') : '无';
-        const blacklistText = (pc.blacklist || []).length > 0 ? pc.blacklist.join('\n') : '无';
+        const list = pc[listType] || [];
+        
+        const listName = listType === 'whitelist' ? '白名单' : '黑名单';
+        const listText = list.length > 0 ? list.join('\n') : '无';
 
-        const replyMsg = `--- 签到权限名单 ---\n当前模式: ${modeText}\n\n--- 白名单 ---\n${whitelistText}\n\n--- 黑名单 ---\n${blacklistText}`;
+        const replyMsg = `--- 签到${listName} ---\n${listText}`;
         await e.reply(replyMsg);
+        return true;
+    }
+    
+    async viewGroupCheckinList(e) {
+        if (!e.isGroup) {
+            return e.reply('此指令只能在群聊中使用。');
+        }
+        
+        await e.reply('正在统计本群签到情况，请稍候...');
+
+        try {
+            const memberMap = await e.group.getMemberMap();
+            if (!fs.existsSync(bbsConfigPath)) {
+                fs.mkdirSync(bbsConfigPath, { recursive: true });
+            }
+            const registeredFiles = fs.readdirSync(bbsConfigPath).filter(f => f.endsWith('.yaml')).map(f => path.parse(f).name);
+            const registeredSet = new Set(registeredFiles);
+            
+            let registeredCount = 0;
+            const registeredMembers = [];
+            
+            for (const [userId, member] of memberMap) {
+                if (registeredSet.has(String(userId))) {
+                    registeredCount++;
+                    registeredMembers.push(`- ${member.card || member.nickname} (${userId})`);
+                }
+            }
+            
+            const totalMembers = memberMap.size;
+            let replyMsg = `--- 本群签到统计 ---\n已注册: ${registeredCount} / ${totalMembers}\n\n`;
+            if (registeredCount > 0) {
+                replyMsg += "已注册成员列表:\n" + registeredMembers.join('\n');
+            } else {
+                replyMsg += "暂无成员注册自动签到。";
+            }
+            
+            await e.reply(replyMsg);
+
+        } catch (error) {
+            logger.error(`[荷花插件] 统计群签到列表失败:`, error);
+            await e.reply('统计失败，无法获取群成员列表或读取配置文件。');
+        }
         return true;
     }
 
