@@ -48,7 +48,7 @@ export class lotusCheckin extends plugin {
                 { reg: '^#(添加|删除)(黑|白)名单(.*)$', fnc: 'updatePermissionList', permission: 'master' },
                 { reg: '^#签到(黑|白)名单列表$', fnc: 'viewPermissionLists', permission: 'master' },
                 { reg: '^#签到名单列表$', fnc: 'viewGroupCheckinList', permission: 'default' },
-                { reg: '^#检查插件更新$', fnc: 'checkPluginUpdate', permission: 'master' }
+                { reg: '^#荷花插件更新$', fnc: 'checkPluginUpdate', permission: 'master' }
             ]
         });
 
@@ -56,8 +56,6 @@ export class lotusCheckin extends plugin {
         
         this.task = null;
         this.refreshTask = null;
-        this.xiaoyaocvsCheckTask = null;
-        this.updateCheckTask = null;
         this.commandsAndEnv = null;
         this.pluginConfig = {};
         
@@ -95,9 +93,7 @@ export class lotusCheckin extends plugin {
         this._loadPluginConfig();
         const pc = this.pluginConfig.permissionControl;
         if (!pc || !pc.mode) return true;
-
         const userIdStr = String(userId);
-
         if (pc.mode === 'whitelist') {
             return (pc.whitelist || []).map(String).includes(userIdStr);
         } else {
@@ -121,22 +117,16 @@ export class lotusCheckin extends plugin {
         this._loadPluginConfig();
         const action = e.msg.includes('添加') ? 'add' : 'remove';
         const listType = e.msg.includes('白') ? 'whitelist' : 'blacklist';
-
         const userId = (e.at || String(e.msg).match(/\d{5,12}/)?.[0] || '').trim();
-
         if (!userId) {
             return e.reply('[荷花插件] 未能识别到有效的QQ号。');
         }
-
         if (!this.pluginConfig.permissionControl[listType]) {
             this.pluginConfig.permissionControl[listType] = [];
         }
-
         const list = this.pluginConfig.permissionControl[listType].map(String);
         const userExists = list.includes(userId);
-
         let replyMsg = '';
-
         if (action === 'add') {
             if (userExists) {
                 replyMsg = `用户 ${userId} 已存在于${listType === 'whitelist' ? '白' : '黑'}名单中。`;
@@ -152,7 +142,6 @@ export class lotusCheckin extends plugin {
                 replyMsg = `已从${listType === 'whitelist' ? '白' : '黑'}名单中删除用户 ${userId}。`;
             }
         }
-
         if (this._savePluginConfig()) {
             await e.reply(`[荷花插件] ${replyMsg}`);
         } else {
@@ -166,10 +155,8 @@ export class lotusCheckin extends plugin {
         const listType = e.msg.includes('白') ? 'whitelist' : 'blacklist';
         const pc = this.pluginConfig.permissionControl;
         const list = pc[listType] || [];
-
         const listName = listType === 'whitelist' ? '白名单' : '黑名单';
         const listText = list.length > 0 ? list.join('\n') : '无';
-
         const replyMsg = `--- 签到${listName} ---\n${listText}`;
         await e.reply(replyMsg);
         return true;
@@ -179,9 +166,7 @@ export class lotusCheckin extends plugin {
         if (!e.isGroup) {
             return e.reply('此指令只能在群聊中使用。');
         }
-
         await e.reply('正在统计本群签到情况，请稍候...');
-
         try {
             const memberMap = await e.group.getMemberMap();
             if (!fs.existsSync(bbsConfigPath)) {
@@ -189,17 +174,14 @@ export class lotusCheckin extends plugin {
             }
             const registeredFiles = fs.readdirSync(bbsConfigPath).filter(f => f.endsWith('.yaml')).map(f => path.parse(f).name);
             const registeredSet = new Set(registeredFiles);
-
             let registeredCount = 0;
             const registeredMembers = [];
-
             for (const [userId, member] of memberMap) {
                 if (registeredSet.has(String(userId))) {
                     registeredCount++;
                     registeredMembers.push(`- ${member.card || member.nickname} (${userId})`);
                 }
             }
-
             const totalMembers = memberMap.size;
             let replyMsg = `--- 本群签到统计 ---\n已注册: ${registeredCount} / ${totalMembers}\n\n`;
             if (registeredCount > 0) {
@@ -207,9 +189,7 @@ export class lotusCheckin extends plugin {
             } else {
                 replyMsg += "暂无成员注册自动签到。";
             }
-
             await e.reply(replyMsg);
-
         } catch (error) {
             logger.error(`[荷花插件] 统计群签到列表失败:`, error);
             await e.reply('统计失败，无法获取群成员列表或读取配置文件。');
@@ -219,7 +199,6 @@ export class lotusCheckin extends plugin {
 
     async enableCommunitySignIn (e) {
         await e.reply('[荷花插件] 开始启用社区BBS签到模式...');
-
         try {
             const captchaSrcPath = path.join(lotusPluginRoot, 'config', 'captcha.py');
             const captchaDestPath = path.join(bbsToolsPath, 'captcha.py');
@@ -227,11 +206,9 @@ export class lotusCheckin extends plugin {
                 await e.reply('[荷花插件] 错误: 未在 config 目录下找到 captcha.py 文件。'); return true;
             }
             fs.copyFileSync(captchaSrcPath, captchaDestPath);
-
             const currentTemplatePath = path.join(lotusPluginRoot, 'config', 'template.yaml');
             const bbsTemplatePath = path.join(lotusPluginRoot, 'config', 'template-bbs.yaml');
             const backupTemplatePath = path.join(lotusPluginRoot, 'config', 'template-nonbbs.yaml');
-
             if (!fs.existsSync(bbsTemplatePath)) {
                 await e.reply('[荷花插件] 错误: 未在 config 目录下找到 template-bbs.yaml 预设文件。'); return true;
             }
@@ -239,17 +216,13 @@ export class lotusCheckin extends plugin {
                 fs.renameSync(currentTemplatePath, backupTemplatePath);
             }
             fs.renameSync(bbsTemplatePath, currentTemplatePath);
-
             await e.reply('[荷花插件] 文件切换成功！\n • captcha.py 已覆盖\n • template.yaml 已切换为BBS模式');
-
         } catch (error) {
             logger.error('[荷花插件] 启用社区签到文件操作失败:', error);
             await e.reply('[荷花插件] 文件操作失败，请检查文件是否存在或权限是否正确。'); return true;
         }
-
         await e.reply('[荷花插件] 正在基于新模板批量刷新所有用户配置...');
         await this.batchRefresh(e);
-
         return true;
     }
 
@@ -292,8 +265,7 @@ export class lotusCheckin extends plugin {
             this.setupRefreshScheduler();
             this.cleanupOldLogs();
             this.runStartupCleanup(logBlock);
-            this.setupXiaoyaoCvsCheckScheduler(logBlock);
-            this.setupUpdateCheckScheduler(logBlock);
+            this.checkXiaoyaoCvsSourceOnStart(logBlock);
             if (this.pluginConfig.autoCatchUp !== true) {
                 logBlock.push('[补签] 功能已禁用 (可在config.yaml中开启)');
             } else {
@@ -342,93 +314,8 @@ export class lotusCheckin extends plugin {
         this.refreshTask = schedule.scheduleJob(this.pluginConfig.autoRefresh.schedule, taskCallback);
     }
     
-    setupXiaoyaoCvsCheckScheduler(logBlock) {
-        if (this.xiaoyaocvsCheckTask) this.xiaoyaocvsCheckTask.cancel();
-        const taskCallback = () => this._checkXiaoyaoCvsPluginSource();
-        taskCallback();
-        this.xiaoyaocvsCheckTask = schedule.scheduleJob('0 */15 * * * *', taskCallback);
-        setTimeout(() => {
-            if (this.xiaoyaocvsCheckTask) {
-                this.xiaoyaocvsCheckTask.cancel();
-                logger.info('[荷花插件] 依赖插件源的初期密集检查已结束。');
-            }
-        }, 60 * 60 * 1000);
-        logBlock.push(`[任务] 依赖插件源检查已启动 (启动后1小时内每15分钟)`);
-    }
-
-    setupUpdateCheckScheduler(logBlock) {
-        if (this.updateCheckTask) this.updateCheckTask.cancel();
-        const taskCallback = () => {
-            this.checkPluginUpdate(null);
-        };
-        this.updateCheckTask = schedule.scheduleJob('0 */30 * * * *', taskCallback);
-        logBlock.push('[任务] 插件自动更新检查已启动 (每30分钟)');
-    }
-
-    async checkPluginUpdate(e = null) {
-        if (e) {
-            await e.reply('正在检查插件更新，请稍候...');
-        }
-    
-        const runGitCommand = (command, args) => {
-            return new Promise((resolve, reject) => {
-                const fullCommand = `${command} ${args.join(' ')} > "${updateLogPath}" 2>&1`;
-                const gitProcess = spawn(fullCommand, { cwd: lotusPluginRoot, shell: true });
-                
-                gitProcess.on('close', (code) => {
-                    const output = fs.existsSync(updateLogPath) ? fs.readFileSync(updateLogPath, 'utf8') : '';
-                    if (code === 0) {
-                        resolve(output);
-                    } else {
-                        reject(new Error(output));
-                    }
-                });
-                gitProcess.on('error', (err) => reject(err));
-            });
-        };
-    
-        try {
-            const pullOutput = await runGitCommand('git', ['pull']);
-            
-            if (pullOutput.includes('Already up to date.')) {
-                if (e) await e.reply('插件已是最新版本，无需更新。');
-                return true;
-            }
-    
-            if (pullOutput.includes('Fast-forward') || /^\w{7}\.\.\w{7}/.test(pullOutput)) {
-                const logOutput = await runGitCommand('git', ['log', '-1', '--pretty=%B']);
-                const latestCommit = logOutput.trim();
-                
-                const updateMsg = `[荷花插件] 检测到更新！\n\n--- 更新日志 ---\n${latestCommit}\n\n请主人发送 #重启 指令以应用更新。`;
-                
-                if (e) await e.reply(updateMsg);
-                
-                this._loadPluginConfig();
-                const masterQQs = cfg.masterQQ || [];
-                for (const id of masterQQs) {
-                    try {
-                        await Bot.pickFriend(id).sendMsg(updateMsg);
-                    } catch (err) {
-                        logger.error(`[荷花插件] 推送更新通知给主人[${id}]失败: ${err}`);
-                    }
-                }
-            } else {
-                 if (e) await e.reply(`Git 操作完成，但无法判断是否为标准更新。\n输出:\n${pullOutput}`);
-            }
-    
-        } catch (gitError) {
-            const errorMsg = `[荷花插件] Git 操作失败！\n可能是因为存在本地修改或合并冲突。\n请登录服务器手动解决后重启。\n\n错误信息:\n${gitError.message}`;
-            logger.error(errorMsg);
-            if (e) await e.reply(errorMsg);
-        } finally {
-            if (fs.existsSync(updateLogPath)) {
-                try { fs.unlinkSync(updateLogPath); } catch {}
-            }
-        }
-        return true;
-    }
-
-    _checkXiaoyaoCvsPluginSource() {
+    checkXiaoyaoCvsSourceOnStart(logBlock) {
+        logBlock.push('[任务] 依赖插件源检查已执行。');
         const cvsPluginPath = path.join(_path, 'plugins', 'xiaoyao-cvs-plugin');
         const gitConfigPath = path.join(cvsPluginPath, '.git', 'config');
         if (!fs.existsSync(gitConfigPath)) return;
@@ -450,13 +337,75 @@ export class lotusCheckin extends plugin {
         }
     }
 
+    async checkPluginUpdate(e) {
+        if (!e) return;
+        await e.reply('正在检查插件更新，请稍候...');
+    
+        const runGitCommand = (command, args) => {
+            return new Promise((resolve, reject) => {
+                const fullCommand = `${command} ${args.join(' ')} > "${updateLogPath}" 2>&1`;
+                const gitProcess = spawn(fullCommand, { cwd: lotusPluginRoot, shell: true });
+                
+                gitProcess.on('close', (code) => {
+                    const output = fs.existsSync(updateLogPath) ? fs.readFileSync(updateLogPath, 'utf8') : '';
+                    if (code === 0) {
+                        resolve(output);
+                    } else {
+                        reject(new Error(output));
+                    }
+                });
+                gitProcess.on('error', (err) => reject(err));
+            });
+        };
+    
+        try {
+            await runGitCommand('git', ['remote', 'update']);
+            const statusOutput = await runGitCommand('git', ['status', '-uno']);
+            
+            if (statusOutput.includes('Your branch is up to date')) {
+                await e.reply('插件已是最新版本，无需更新。');
+                return true;
+            }
+    
+            if (statusOutput.includes('Your branch is behind')) {
+                const pullOutput = await runGitCommand('git', ['pull']);
+                const logOutput = await runGitCommand('git', ['log', '-1', '--pretty=%B']);
+                const latestCommit = logOutput.trim();
+                
+                const updateMsg = `[荷花插件] 检测到更新！\n\n--- 更新日志 ---\n${latestCommit}\n\n请主人发送 #重启 指令以应用更新。`;
+                await e.reply(updateMsg);
+                
+                this._loadPluginConfig();
+                const masterQQs = cfg.masterQQ || [];
+                for (const id of masterQQs) {
+                    try {
+                        await Bot.pickFriend(id).sendMsg(updateMsg);
+                    } catch (err) {
+                        logger.error(`[荷花插件] 推送更新通知给主人[${id}]失败: ${err}`);
+                    }
+                }
+            } else {
+                 await e.reply(`Git 状态未知。\n输出:\n${statusOutput}`);
+            }
+    
+        } catch (gitError) {
+            const errorMsg = `[荷花插件] Git 操作失败！\n可能是因为存在本地修改或合并冲突。\n请登录服务器手动解决后重启。\n\n错误信息:\n${gitError.message}`;
+            logger.error(errorMsg);
+            await e.reply(errorMsg);
+        } finally {
+            if (fs.existsSync(updateLogPath)) {
+                try { fs.unlinkSync(updateLogPath); } catch {}
+            }
+        }
+        return true;
+    }
+
     cleanupOldLogs() {
         const days = this.pluginConfig.logRetentionDays || 7;
         if (days <= 0) return;
         try {
             const files = fs.readdirSync(logArchiveDir);
             const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
-            let deletedCount = 0;
             for (const file of files) {
                 if (!file.endsWith('.log')) continue;
                 try {
@@ -464,11 +413,8 @@ export class lotusCheckin extends plugin {
                     const fileTimestamp = new Date(dateStr).getTime();
                     if (!isNaN(fileTimestamp) && fileTimestamp < cutoff) {
                         fs.unlinkSync(path.join(logArchiveDir, file));
-                        deletedCount++;
                     }
-                } catch (e) {
-                    continue;
-                }
+                } catch (e) { continue; }
             }
         } catch (error) {
             logger.error(`[荷花插件] 清理旧日志时发生错误:`, error);
@@ -657,6 +603,7 @@ export class lotusCheckin extends plugin {
         } else {
             const reportMessage = `--- 荷花自动批量刷新报告 ---\n${summary}`;
             logger.info(`[荷花插件] 自动批量刷新完成。\n${reportMessage}`);
+            this._loadPluginConfig();
             const masterQQs = cfg.masterQQ || [];
             masterQQs.forEach(id => {
                 Bot.pickFriend(id).sendMsg(reportMessage).catch(err => {
@@ -777,6 +724,7 @@ export class lotusCheckin extends plugin {
             if (e && e.user_id) {
                 pushTargets.push(e.user_id);
             } else {
+                this._loadPluginConfig();
                 pushTargets = cfg.masterQQ || [];
             }
             if (code !== 0) {
