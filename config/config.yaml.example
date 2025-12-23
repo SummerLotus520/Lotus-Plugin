@@ -65,14 +65,7 @@ neteasePartner:
   schedule: "0 30 0 * * *"
   # 是否在机器人重启后，自动补签今日错过的任务 (true: 开启, false: 关闭)
   autoCatchUp: false
-  # Netease API Enhanced 服务地址 (仅用于自动登录和刷新Cookie)
+  # Netease API Enhanced 服务地址
   apiUrl: "http://127.0.0.1:3000"
-  # 账号列表 (支持多账号，建议通过 #合伙人登录 指令添加)
-  accounts:
-    - name: "主账号"
-      phone: "19933550336"
-      password: "33550336"
-      # 额外评定数量 (9999表示全部)
-      extraCount: 9999
-      # 是否开启随机评论
-      comment: true
+  # 账号列表 (通过 #合伙人登录 指令添加)
+  accounts: []
