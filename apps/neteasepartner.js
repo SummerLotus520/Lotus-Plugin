@@ -24,7 +24,7 @@ export class neteasePartner extends plugin {
     constructor() {
         super({
             name: '[荷花插件] 音乐合伙人',
-            dsc: '合伙人评定',
+            dsc: '音乐合伙人自动评定',
             event: 'message',
             priority: 10,
             rule: [
@@ -34,20 +34,21 @@ export class neteasePartner extends plugin {
             ]
         });
 
-        if (global.lotusNeteaseLoaded) return;
-        this.task = null;
+        for (let i in schedule.scheduledJobs) {
+            if (i.startsWith('nep_')) {
+                schedule.scheduledJobs[i].cancel();
+            }
+        }
         this.init();
-        global.lotusNeteaseLoaded = true;
     }
 
     async init() {
         if (!fs.existsSync(neteaseDataDir)) fs.mkdirSync(neteaseDataDir, { recursive: true });
         if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
         this.setupScheduler();
-        this.runStartupSequence();
+        setTimeout(() => this.runStartupSequence(), 5000);
     }
 
-    // WeApi 加密
     weapi(obj) {
         const text = JSON.stringify(obj);
         const secretKey = crypto.randomBytes(16).map(n => "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".charCodeAt(n % 62));
@@ -85,159 +86,112 @@ export class neteasePartner extends plugin {
     async partnerLogin(e) {
         const config = this._loadConfig();
         const apiUrl = config.apiUrl || "http://127.0.0.1:3000";
-
         try {
             const keyRes = await axios.get(`${apiUrl}/login/qr/key?timestamp=${Date.now()}`);
             const key = keyRes.data.data.unikey;
             const qrRes = await axios.get(`${apiUrl}/login/qr/create?key=${key}&qrimg=true&timestamp=${Date.now()}`);
             const qrimg = qrRes.data.data.qrimg; 
-
-            await e.reply(["[荷花合伙人] 请使用网易云APP扫码：", segment.image(qrimg)]);
-
+            await e.reply(["[荷花合伙人] 请使用网易云APP扫码登录：", segment.image(qrimg)]);
             let timer = setInterval(async () => {
                 const checkRes = await axios.get(`${apiUrl}/login/qr/check?key=${key}&timestamp=${Date.now()}`).catch(()=>null);
-                if (!checkRes) return;
-                const code = checkRes.data.code;
-
-                if (code === 800) {
-                    await e.reply("二维码已过期，请重新登录。");
+                if (checkRes?.data?.code === 803) {
                     clearInterval(timer);
-                } else if (code === 803) {
-                    clearInterval(timer);
-                    
                     const rawCookie = checkRes.data.cookie || "";
                     const filterKeys = ['path', 'expires', 'max-age', 'domain', 'httponly', 'secure', 'samesite'];
                     const cookieMap = {};
-
                     rawCookie.split(';').forEach(item => {
                         const pair = item.trim().split('=');
                         if (pair.length > 1) {
                             const k = pair[0].trim();
                             const v = pair.slice(1).join('=');
-                            const kLower = k.toLowerCase();
-                            if (k && !filterKeys.includes(kLower)) {
-                                cookieMap[k] = v; 
-                            }
+                            if (k && !filterKeys.includes(k.toLowerCase())) cookieMap[k] = v;
                         }
                     });
                     const cleanCookie = Object.entries(cookieMap).map(([k, v]) => `${k}=${v}`).join('; ');
-
-                    let uid = "", nickname = "未知用户";
+                    let uid = "", nickname = "新账号";
                     try {
                         const userRes = await axios.get(`${apiUrl}/user/account?cookie=${encodeURIComponent(cleanCookie)}&timestamp=${Date.now()}`);
                         uid = userRes.data.profile.userId;
                         nickname = userRes.data.profile.nickname;
-                    } catch (err) { logger.error(err); }
-
+                    } catch (err) {}
                     let currentConfig = this._loadConfig();
                     if (!currentConfig.accounts) currentConfig.accounts = [];
                     const idx = currentConfig.accounts.findIndex(a => a.uid === uid);
-                    
-                    const accountData = {
-                        uid: uid,
-                        nickname: nickname,
-                        qq: e.user_id,
-                        extraCount: 9999,
-                        comment: true,
-                        cookie: cleanCookie
-                    };
-
+                    const accountData = { uid, nickname, qq: e.user_id, extraCount: 9999, comment: true, cookie: cleanCookie };
                     if (idx > -1) currentConfig.accounts[idx] = { ...currentConfig.accounts[idx], ...accountData };
                     else currentConfig.accounts.push(accountData);
-
                     this._saveConfig(currentConfig);
-                    await e.reply(`[荷花合伙人] 登录成功！\n用户：${nickname}\n凭据已存入配置。`);
+                    await e.reply(`[荷花合伙人] 登录成功：${nickname}`);
+                } else if (checkRes?.data?.code === 800) {
+                    clearInterval(timer);
+                    await e.reply("[荷花合伙人] 二维码已过期，请重新登录");
                 }
             }, 3000);
             setTimeout(() => clearInterval(timer), 300000); 
-        } catch (err) { await e.reply(`扫码启动失败: ${err.message}`); }
+        } catch (err) { await e.reply(`启动扫码失败: ${err.message}`); }
     }
 
     async executeTask(triggerType = "定时任务") {
         fs.writeFileSync(lastRunLogPath, new Date().toLocaleDateString('sv-SE'), 'utf8');
         const config = this._loadConfig();
         const accounts = config.accounts || [];
-        const comments = fs.existsSync(commentPath) ? fs.readFileSync(commentPath, 'utf8').split('\n').filter(l => l.trim()) : ["打卡支持！"];
-        
-        let stats = { total: 0, success: 0, skip: 0, fail: 0 };
-        let detail = { success: [], skip: [], fail: [] };
-
-        if (accounts.length === 0) return "--- 荷花音乐合伙人打卡报告 ---\n未配置账号。";
-
+        const comments = fs.existsSync(commentPath) ? fs.readFileSync(commentPath, 'utf8').split('\n').filter(l => l.trim()) : ["打卡支持"];
+        let reportBlocks = [`---荷花音乐合伙人打卡报告---`, `触发方式:${triggerType}`];
+        if (accounts.length === 0) return "---荷花音乐合伙人打卡报告---\n未配置账号";
         for (const acc of accounts) {
-            const name = acc.nickname || `UID:${acc.uid}`;
-            if (!acc.cookie) { stats.fail++; detail.fail.push(`${name} (无Cookie)`); continue; }
-
+            let stats = { total: 0, success: 0, skip: 0, fail: 0 };
+            let detail = { success: [], skip: [], fail: [] };
+            const name = acc.nickname || `用户_${acc.uid}`;
             try {
+                if (!acc.cookie) throw new Error("未登录");
                 const csrf = acc.cookie.match(/__csrf=([^;]+)/)?.[1] || "";
                 const headers = { Cookie: acc.cookie, Referer: "https://mp.music.163.com/" };
-
                 const taskRes = await axios.get(`https://interface.music.163.com/api/music/partner/daily/task/get`, { headers });
-                if (taskRes.data.code === 301) throw new Error("Cookie失效");
-                if (taskRes.data.code !== 200) throw new Error("获取任务失败");
-
+                if (taskRes.data.code !== 200) throw new Error(taskRes.data.message || "接口异常");
                 const works = [...(taskRes.data.data.works || [])];
                 const extraRes = await axios.get(`https://interface.music.163.com/api/music/partner/extra/wait/evaluate/work/list`, { headers }).catch(() => null);
                 if (extraRes?.data?.code === 200) {
                     const undone = (extraRes.data.data || []).filter(x => !x.completed).slice(0, acc.extraCount || 0);
                     works.push(...undone.map(x => ({ ...x, isExtra: true })));
                 }
-
-                if (works.length === 0) detail.success.push(`[${name}] 今日已全部完成`);
-
                 for (const item of works) {
                     stats.total++;
-                    if (item.completed) { stats.skip++; detail.skip.push(`[${name}] ${item.work.name}`); continue; }
-
+                    const songName = item.work.name;
+                    if (item.completed) {
+                        stats.skip++; detail.skip.push(songName); continue;
+                    }
                     await new Promise(r => setTimeout(r, (Math.floor(Math.random() * 3) + 8) * 1000));
                     const score = Math.floor(Math.random() * 3) + 2; 
                     const payload = {
-                        taskId: taskRes.data.data.id,
-                        workId: item.work.id,
-                        score,
-                        tags: `${score}-A-1`,
-                        customTags: "[]",
+                        taskId: taskRes.data.data.id, workId: item.work.id, score,
+                        tags: `${score}-A-1`, customTags: "[]",
                         comment: acc.comment ? comments[Math.floor(Math.random() * comments.length)] : "",
-                        syncYunCircle: "true",
-                        syncComment: acc.comment ? "true" : "false",
+                        syncYunCircle: "true", syncComment: acc.comment ? "true" : "false",
                         extraScore: JSON.stringify({ "1": score, "2": score, "3": score }),
-                        source: "mp-music-partner",
-                        csrf_token: csrf
+                        source: "mp-music-partner", csrf_token: csrf
                     };
                     if (item.isExtra) payload.extraResource = "true";
-
                     const cryptoData = this.weapi(payload);
                     const postRes = await axios.post(`https://interface.music.163.com/weapi/music/partner/work/evaluate?csrf_token=${csrf}`, 
                         new URLSearchParams(cryptoData).toString(), 
                         { headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" } }
                     );
-
                     if (postRes.data.code === 200) {
-                        stats.success++; detail.success.push(`[${name}] ${item.work.name} (${score}分)`);
+                        stats.success++; detail.success.push(`${songName} (${score}分)`);
                     } else {
-                        stats.fail++; detail.fail.push(`[${name}] ${item.work.name} (${postRes.data.message})`);
+                        stats.fail++; detail.fail.push(`${songName} (${postRes.data.message})`);
                     }
                 }
-            } catch (e) { stats.fail++; detail.fail.push(`${name} (${e.message})`); }
+            } catch (e) { stats.fail++; detail.fail.push(`[错误] ${e.message}`); }
+            if (stats.total === 0) detail.success.push("今日无评定待办");
+            let block = [`---`, name, ``, `执行完毕，共执行评定${stats.total}首歌，成功${stats.success}个，跳过${stats.skip}个，失败${stats.fail}个`, ``, `评定成功：\n${detail.success.join('\n') || '无'}`, ``, `评定跳过：\n${detail.skip.join('\n') || '无'}`, ``, `评定失败：\n${detail.fail.join('\n') || '无'}`];
+            reportBlocks.push(block.join('\n'));
         }
-
-        const report = [
-            `--- 荷花音乐合伙人打卡报告 ---`,
-            `触发方式: ${triggerType}`,
-            ``,
-            `执行完毕，共执行评定${stats.total}首歌，成功${stats.success}个，跳过${stats.skip}个，失败${stats.fail}个`,
-            ``,
-            `评定成功：\n${detail.success.length ? detail.success.join('\n') : '无'}`,
-            ``,
-            `评定跳过：\n${detail.skip.length ? detail.skip.join('\n') : '无'}`,
-            ``,
-            `评定失败：\n${detail.fail.length ? detail.fail.join('\n') : '无'}`
-        ].join('\n');
-
+        const finalReport = reportBlocks.join('\n');
         const now = new Date();
-        const dateStr = now.getFullYear() + (now.getMonth() + 1).toString().padStart(2, '0') + now.getDate().toString().padStart(2, '0') + now.getHours().toString().padStart(2, '0') + now.getMinutes().toString().padStart(2, '0') + now.getSeconds().toString().padStart(2, '0');
-        fs.writeFileSync(path.join(logDir, `nep-${dateStr}.log`), report, 'utf8');
-        return report;
+        const dateStr = now.getFullYear() + (now.getMonth() + 1).toString().padStart(2, '0') + now.getDate().toString().padStart(2, '0') + now.getHours().toString().padStart(2, '0') + now.getMinutes().toString().padStart(2, '0');
+        fs.writeFileSync(path.join(logDir, `nep-${dateStr}.log`), finalReport, 'utf8');
+        return finalReport;
     }
 
     runStartupSequence() {
@@ -250,28 +204,28 @@ export class neteasePartner extends plugin {
         const sTime = new Date();
         sTime.setHours(parseInt(parts[2]), parseInt(parts[1]), 0, 0);
         if (new Date() > sTime) {
-            logger.info('[网易云合伙人] 启动补签...');
-            setTimeout(() => this.executeTask("自动补签"), 5000);
+            this.executeTask("自动补签").then(report => {
+                (cfg.masterQQ || []).forEach(m => Bot.pickFriend(m).sendMsg(report).catch(() => {}));
+            });
         }
     }
 
     async manualTest(e) {
-        await e.reply("合伙人自动化评定任务开始，请稍候...");
+        await e.reply("手动评定任务启动...");
         const res = await this.executeTask("手动测试");
         await e.reply(res);
     }
 
     async getPartnerLog(e) {
         const files = fs.readdirSync(logDir).filter(f => f.startsWith('nep-')).sort().reverse();
-        if (files.length === 0) return e.reply("暂无日志记录。");
+        if (files.length === 0) return e.reply("无日志记录");
         await e.reply(`最新日志 [${files[0]}]:\n\n${fs.readFileSync(path.join(logDir, files[0]), 'utf8')}`);
     }
 
     setupScheduler() {
         const config = this._loadConfig();
-        if (this.task) this.task.cancel();
         if (config.enable && config.schedule) {
-            this.task = schedule.scheduleJob(config.schedule, async () => {
+            schedule.scheduleJob('nep_auto_task', config.schedule, async () => {
                 const report = await this.executeTask("定时任务");
                 (cfg.masterQQ || []).forEach(m => Bot.pickFriend(m).sendMsg(report).catch(() => {}));
             });
