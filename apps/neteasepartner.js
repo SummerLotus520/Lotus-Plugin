@@ -8,7 +8,7 @@ import schedule from 'node-schedule';
 import cfg from '../../../lib/config/config.js';
 
 const _path = process.cwd();
-const lotusRoot = path.join(_path, 'plugins', 'Lotus-Plugin');
+const lotusRoot = path.join(_path, 'plugins', 'Lotus-Plugin');s
 const configPath = path.join(lotusRoot, 'config', 'config.yaml');
 const commentPath = path.join(lotusRoot, 'config', 'comment.example');
 const logDir = path.join(lotusRoot, 'data', 'logs');
@@ -47,6 +47,14 @@ export class neteasePartner extends plugin {
         if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
         this.setupScheduler();
         setTimeout(() => this.runStartupSequence(), 5000);
+    }
+
+    getWeightedScore() {
+        const r = Math.floor(Math.random() * 100);
+        if (r < 35) return 3;
+        if (r < 70) return 4;
+        if (r < 90) return 2;
+        return 5;
     }
 
     weapi(obj) {
@@ -138,55 +146,87 @@ export class neteasePartner extends plugin {
         const comments = fs.existsSync(commentPath) ? fs.readFileSync(commentPath, 'utf8').split('\n').filter(l => l.trim()) : ["打卡支持"];
         let reportBlocks = [`---荷花音乐合伙人打卡报告---`, `触发方式:${triggerType}`];
         if (accounts.length === 0) return "---荷花音乐合伙人打卡报告---\n未配置账号";
+
         for (const acc of accounts) {
+            let songResults = new Map();
+            const name = acc.nickname || `用户_${acc.uid}`;
+            const headers = { Cookie: acc.cookie, Referer: "https://mp.music.163.com/" };
+
+            for (let round = 1; round <= 2; round++) {
+                try {
+                    if (!acc.cookie) throw new Error("未登录");
+                    const csrf = acc.cookie.match(/__csrf=([^;]+)/)?.[1] || "";
+                    const taskRes = await axios.get(`https://interface.music.163.com/api/music/partner/daily/task/get`, { headers });
+                    if (taskRes.data.code !== 200) throw new Error(taskRes.data.message || "接口异常");
+
+                    let works = [...(taskRes.data.data.works || [])];
+                    const extraRes = await axios.get(`https://interface.music.163.com/api/music/partner/extra/wait/evaluate/work/list`, { headers }).catch(() => null);
+                    if (extraRes?.data?.code === 200) {
+                        const undone = (extraRes.data.data || []).filter(x => !x.completed).slice(0, acc.extraCount || 0);
+                        works.push(...undone.map(x => ({ ...x, isExtra: true })));
+                    }
+
+                    for (const item of works) {
+                        const songId = item.work.id;
+                        const songName = item.work.name;
+                        if (songResults.has(songId) && songResults.get(songId).status === 'success') continue;
+                        if (item.completed) {
+                            songResults.set(songId, { name: songName, status: 'skip', msg: '已完成' });
+                            continue;
+                        }
+
+                        await new Promise(r => setTimeout(r, (Math.floor(Math.random() * 3) + 8) * 1000));
+                        const score = this.getWeightedScore();
+                        
+                        let extraScoreObj = {};
+                        if (item.work.dimensions && item.work.dimensions.length > 0) {
+                            item.work.dimensions.forEach(d => {
+                                extraScoreObj[d.id || d] = this.getWeightedScore();
+                            });
+                        }
+
+                        const payload = {
+                            taskId: taskRes.data.data.id, workId: songId, score,
+                            tags: `${score}-A-1`, customTags: "[]",
+                            comment: acc.comment ? comments[Math.floor(Math.random() * comments.length)] : "",
+                            syncYunCircle: "true", syncComment: acc.comment ? "true" : "false",
+                            extraScore: JSON.stringify(extraScoreObj),
+                            source: "mp-music-partner", csrf_token: csrf
+                        };
+                        if (item.isExtra) payload.extraResource = "true";
+
+                        const cryptoData = this.weapi(payload);
+                        const postRes = await axios.post(`https://interface.music.163.com/weapi/music/partner/work/evaluate?csrf_token=${csrf}`, 
+                            new URLSearchParams(cryptoData).toString(), 
+                            { headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" } }
+                        );
+
+                        if (postRes.data.code === 200) {
+                            songResults.set(songId, { name: songName, status: 'success', msg: `${score}分` });
+                        } else {
+                            songResults.set(songId, { name: songName, status: 'fail', msg: postRes.data.message });
+                        }
+                    }
+                } catch (e) {
+                    if (round === 2 && songResults.size === 0) songResults.set('err', { name: '流程错误', status: 'fail', msg: e.message });
+                }
+            }
+
             let stats = { total: 0, success: 0, skip: 0, fail: 0 };
             let detail = { success: [], skip: [], fail: [] };
-            const name = acc.nickname || `用户_${acc.uid}`;
-            try {
-                if (!acc.cookie) throw new Error("未登录");
-                const csrf = acc.cookie.match(/__csrf=([^;]+)/)?.[1] || "";
-                const headers = { Cookie: acc.cookie, Referer: "https://mp.music.163.com/" };
-                const taskRes = await axios.get(`https://interface.music.163.com/api/music/partner/daily/task/get`, { headers });
-                if (taskRes.data.code !== 200) throw new Error(taskRes.data.message || "接口异常");
-                const works = [...(taskRes.data.data.works || [])];
-                const extraRes = await axios.get(`https://interface.music.163.com/api/music/partner/extra/wait/evaluate/work/list`, { headers }).catch(() => null);
-                if (extraRes?.data?.code === 200) {
-                    const undone = (extraRes.data.data || []).filter(x => !x.completed).slice(0, acc.extraCount || 0);
-                    works.push(...undone.map(x => ({ ...x, isExtra: true })));
-                }
-                for (const item of works) {
-                    stats.total++;
-                    const songName = item.work.name;
-                    if (item.completed) {
-                        stats.skip++; detail.skip.push(songName); continue;
-                    }
-                    await new Promise(r => setTimeout(r, (Math.floor(Math.random() * 3) + 8) * 1000));
-                    const score = Math.floor(Math.random() * 3) + 2; 
-                    const payload = {
-                        taskId: taskRes.data.data.id, workId: item.work.id, score,
-                        tags: `${score}-A-1`, customTags: "[]",
-                        comment: acc.comment ? comments[Math.floor(Math.random() * comments.length)] : "",
-                        syncYunCircle: "true", syncComment: acc.comment ? "true" : "false",
-                        extraScore: JSON.stringify({ "1": score, "2": score, "3": score }),
-                        source: "mp-music-partner", csrf_token: csrf
-                    };
-                    if (item.isExtra) payload.extraResource = "true";
-                    const cryptoData = this.weapi(payload);
-                    const postRes = await axios.post(`https://interface.music.163.com/weapi/music/partner/work/evaluate?csrf_token=${csrf}`, 
-                        new URLSearchParams(cryptoData).toString(), 
-                        { headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" } }
-                    );
-                    if (postRes.data.code === 200) {
-                        stats.success++; detail.success.push(`${songName} (${score}分)`);
-                    } else {
-                        stats.fail++; detail.fail.push(`${songName} (${postRes.data.message})`);
-                    }
-                }
-            } catch (e) { stats.fail++; detail.fail.push(`[错误] ${e.message}`); }
+            songResults.forEach(res => {
+                if (res.name === '流程错误') return;
+                stats.total++;
+                if (res.status === 'success') { stats.success++; detail.success.push(`${res.name} (${res.msg})`); }
+                else if (res.status === 'skip') { stats.skip++; detail.skip.push(`${res.name} (${res.msg})`); }
+                else { stats.fail++; detail.fail.push(`${res.name} (${res.msg})`); }
+            });
+
             if (stats.total === 0) detail.success.push("今日无评定待办");
             let block = [`---`, name, ``, `执行完毕，共执行评定${stats.total}首歌，成功${stats.success}个，跳过${stats.skip}个，失败${stats.fail}个`, ``, `评定成功：\n${detail.success.join('\n') || '无'}`, ``, `评定跳过：\n${detail.skip.join('\n') || '无'}`, ``, `评定失败：\n${detail.fail.join('\n') || '无'}`];
             reportBlocks.push(block.join('\n'));
         }
+
         const finalReport = reportBlocks.join('\n');
         const now = new Date();
         const dateStr = now.getFullYear() + (now.getMonth() + 1).toString().padStart(2, '0') + now.getDate().toString().padStart(2, '0') + now.getHours().toString().padStart(2, '0') + now.getMinutes().toString().padStart(2, '0');
