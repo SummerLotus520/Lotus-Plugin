@@ -8,7 +8,7 @@ import schedule from 'node-schedule';
 import cfg from '../../../lib/config/config.js';
 
 const _path = process.cwd();
-const lotusRoot = path.join(_path, 'plugins', 'Lotus-Plugin');s
+const lotusRoot = path.join(_path, 'plugins', 'Lotus-Plugin');
 const configPath = path.join(lotusRoot, 'config', 'config.yaml');
 const commentPath = path.join(lotusRoot, 'config', 'comment.example');
 const logDir = path.join(lotusRoot, 'data', 'logs');
@@ -46,7 +46,7 @@ export class neteasePartner extends plugin {
         if (!fs.existsSync(neteaseDataDir)) fs.mkdirSync(neteaseDataDir, { recursive: true });
         if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
         this.setupScheduler();
-        setTimeout(() => this.runStartupSequence(), 5000);
+        setTimeout(() => this.runStartupSequence(), 10000);
     }
 
     getWeightedScore() {
@@ -145,6 +145,7 @@ export class neteasePartner extends plugin {
         const accounts = config.accounts || [];
         const comments = fs.existsSync(commentPath) ? fs.readFileSync(commentPath, 'utf8').split('\n').filter(l => l.trim()) : ["打卡支持"];
         let reportBlocks = [`---荷花音乐合伙人打卡报告---`, `触发方式:${triggerType}`];
+        
         if (accounts.length === 0) return "---荷花音乐合伙人打卡报告---\n未配置账号";
 
         for (const acc of accounts) {
@@ -177,9 +178,8 @@ export class neteasePartner extends plugin {
 
                         await new Promise(r => setTimeout(r, (Math.floor(Math.random() * 3) + 8) * 1000));
                         const score = this.getWeightedScore();
-                        
                         let extraScoreObj = {};
-                        if (item.work.dimensions && item.work.dimensions.length > 0) {
+                        if (item.work.dimensions) {
                             item.work.dimensions.forEach(d => {
                                 extraScoreObj[d.id || d] = this.getWeightedScore();
                             });
@@ -245,6 +245,7 @@ export class neteasePartner extends plugin {
         sTime.setHours(parseInt(parts[2]), parseInt(parts[1]), 0, 0);
         if (new Date() > sTime) {
             this.executeTask("自动补签").then(report => {
+                if (!global.Bot) return;
                 (cfg.masterQQ || []).forEach(m => Bot.pickFriend(m).sendMsg(report).catch(() => {}));
             });
         }
@@ -267,6 +268,7 @@ export class neteasePartner extends plugin {
         if (config.enable && config.schedule) {
             schedule.scheduleJob('nep_auto_task', config.schedule, async () => {
                 const report = await this.executeTask("定时任务");
+                if (!global.Bot) return;
                 (cfg.masterQQ || []).forEach(m => Bot.pickFriend(m).sendMsg(report).catch(() => {}));
             });
         }
