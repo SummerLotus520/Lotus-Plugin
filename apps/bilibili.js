@@ -2,10 +2,10 @@ import plugin from '../../../lib/plugins/plugin.js';
 import fetch from 'node-fetch';
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { spawn } from 'child_process';
 import JSZip from 'jszip';
 import YAML from 'yaml';
-import schedule from 'node-schedule';
 
 const _path = process.cwd();
 const pluginRoot = path.join(_path, 'plugins', 'Lotus-Plugin');
@@ -14,19 +14,30 @@ const dataDir = path.join(pluginRoot, 'data', 'bilibili');
 const BILI_VIDEO_INFO_API = "http://api.bilibili.com/x/web-interface/view";
 const BILI_PLAY_STREAM_API = "https://api.bilibili.com/x/player/playurl";
 const BILI_STREAM_INFO_API = "https://api.live.bilibili.com/room/v1/Room/get_info";
+const BILI_SEARCH_API = "https://api.bilibili.com/x/web-interface/wbi/search/type";
+const BILI_NAV_API = "https://api.bilibili.com/x/web-interface/nav";
 
 const COMMON_HEADER = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36',
     'Referer': 'https://www.bilibili.com/',
 };
 
-const cacheRedisKeyPrefix = "lotus:bilibili:cache:";
+const CACHE_KEY_VIDEO = "lotus:bilibili:cache:";
+const CACHE_KEY_SEARCH = "lotus:bilibili:search:";
+const CACHE_KEY_WBI = "lotus:bilibili:wbi";
+
+const mixinKeyEncTab = [
+    46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49,
+    33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13, 37, 48, 7, 16, 24, 55, 40,
+    61, 26, 17, 0, 1, 60, 51, 30, 4, 22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11,
+    36, 20, 34, 44, 52
+];
 
 export class BilibiliParser extends plugin {
     constructor() {
         super({
             name: '[荷花插件] B站解析',
-            dsc: '处理B站视频、直播链接',
+            dsc: '处理B站视频、直播链接及搜索',
             event: 'message',
             priority: 0,
             rule: [
@@ -34,7 +45,10 @@ export class BilibiliParser extends plugin {
                     reg: '(bilibili.com|b23.tv|bili2233.cn|t.bilibili.com|^BV[1-9a-zA-Z]{10}$|^av[0-9]+$)',
                     fnc: 'parse'
                 },
-                { reg: '^#B站登录$', fnc: 'login', permission: 'master' }
+                { reg: '^#B站登录$', fnc: 'login', permission: 'master' },
+                { reg: '^#荷花搜视频.+', fnc: 'searchVideo' },
+                { reg: '^#看[0-9]+$', fnc: 'pickVideo' },
+                { reg: '^#荷花看视频.+', fnc: 'directWatch' }
             ]
         });
 
@@ -68,13 +82,199 @@ export class BilibiliParser extends plugin {
             logger.error(`[荷花插件][B站] 启动时清理缓存目录失败: ${err.message}`);
         }
     }
-    
+
+    getMixinKey(orig) {
+        return mixinKeyEncTab.map(n => orig[n]).join('').slice(0, 32);
+    }
+
+    async getWbiKeys() {
+        const cachedKeys = await redis.get(CACHE_KEY_WBI);
+        if (cachedKeys) {
+            return JSON.parse(cachedKeys);
+        }
+
+        try {
+            const { sessdata } = await this.getSessData();
+            const headers = { ...COMMON_HEADER };
+            if (sessdata) headers.Cookie = `SESSDATA=${sessdata}`;
+
+            const resp = await fetch(BILI_NAV_API, { headers });
+            const json = await resp.json();
+
+            if (json.code !== 0 && json.code !== -101) {
+                throw new Error(`获取导航数据失败: ${json.message}`);
+            }
+
+            const wbi_img = json.data?.wbi_img;
+            if (!wbi_img) throw new Error("未获取到 Wbi 密钥信息");
+
+            const img_key = wbi_img.img_url.slice(
+                wbi_img.img_url.lastIndexOf('/') + 1,
+                wbi_img.img_url.lastIndexOf('.')
+            );
+            const sub_key = wbi_img.sub_url.slice(
+                wbi_img.sub_url.lastIndexOf('/') + 1,
+                wbi_img.sub_url.lastIndexOf('.')
+            );
+
+            const keys = { img_key, sub_key };
+            await redis.set(CACHE_KEY_WBI, JSON.stringify(keys), { EX: 36000 });
+
+            return keys;
+        } catch (err) {
+            logger.error("[荷花插件][Wbi] 获取密钥失败:", err);
+            throw err;
+        }
+    }
+
+    async encWbi(params) {
+        const { img_key, sub_key } = await this.getWbiKeys();
+        const mixin_key = this.getMixinKey(img_key + sub_key);
+        const curr_time = Math.round(Date.now() / 1000);
+        const chr_filter = /[!'()*]/g;
+
+        const newParams = { ...params, wts: curr_time };
+        
+        const queryStr = Object.keys(newParams)
+            .sort()
+            .map(key => {
+                const value = newParams[key].toString().replace(chr_filter, '');
+                return `${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
+            })
+            .join('&');
+
+        const wbi_sign = crypto.createHash('md5').update(queryStr + mixin_key).digest('hex');
+        return `${queryStr}&w_rid=${wbi_sign}`;
+    }
+
+    async _doSearch(keyword, page = 1) {
+        try {
+            const params = {
+                search_type: 'video',
+                keyword: keyword,
+                page: page
+            };
+            
+            const signedQuery = await this.encWbi(params);
+            const { sessdata } = await this.getSessData();
+            const headers = { ...COMMON_HEADER };
+            if (sessdata) headers.Cookie = `SESSDATA=${sessdata}`; 
+
+            const url = `${BILI_SEARCH_API}?${signedQuery}`;
+            const resp = await fetch(url, { headers });
+            const json = await resp.json();
+
+            if (json.code !== 0) {
+                throw new Error(`搜索API返回错误: ${json.code} - ${json.message}`);
+            }
+
+            const list = (json.data?.result || []).filter(item => item.bvid);
+            return list;
+        } catch (err) {
+            logger.error(`[荷花插件][搜索] 异常: ${err.message}`);
+            throw err;
+        }
+    }
+
+    async searchVideo(e) {
+        const keyword = e.msg.replace(/^#荷花搜视频/, '').trim();
+        if (!keyword) return e.reply("请输入搜索关键词，例如：#荷花搜视频 洛天依");
+
+        try {
+            await e.reply(`正在搜索 B站视频: ${keyword} ...`);
+            const results = await this._doSearch(keyword);
+
+            if (!results || results.length === 0) {
+                return e.reply("未搜索到相关视频。");
+            }
+
+            const displayList = results.slice(0, 10);
+            
+            const contextKey = this.getContextKey(e);
+            
+            await redis.set(contextKey, JSON.stringify(displayList), { EX: 120 });
+
+            let msg = [`[荷花看视频] 搜索结果: ${keyword}`];
+            for (let i = 0; i < displayList.length; i++) {
+                const item = displayList[i];
+                const title = item.title.replace(/<[^>]+>/g, ""); 
+                const play = this.formatNumber(item.play);
+                msg.push(`${i + 1}. ${title}\n   UP: ${item.author} | 播放: ${play} | 时长: ${item.duration}`);
+            }
+            msg.push("----------------");
+            msg.push("请在2分钟内发送 #看+序号 进行解析 (例如: #看1)");
+
+            await e.reply(msg.join('\n'));
+
+        } catch (err) {
+            await e.reply(`搜索失败: ${err.message}`);
+        }
+        return true;
+    }
+
+    async pickVideo(e) {
+        const contextKey = this.getContextKey(e);
+        const cachedData = await redis.get(contextKey);
+        
+        if (!cachedData) return false;
+
+        const indexStr = e.msg.replace(/^#看/, '').trim();
+        const index = parseInt(indexStr);
+        const list = JSON.parse(cachedData);
+
+        if (isNaN(index) || index < 1 || index > list.length) {
+            return e.reply(`请输入正确的序号 (1-${list.length})`);
+        }
+
+        const videoData = list[index - 1];
+        const bvid = videoData.bvid;
+        const videoUrl = `https://www.bilibili.com/video/${bvid}`;
+
+        await e.reply(`已选择第 ${index} 项: ${videoData.title.replace(/<[^>]+>/g, "")}\n开始解析...`);
+        
+        return this.processUrl(e, videoUrl);
+    }
+
+    async directWatch(e) {
+        const keyword = e.msg.replace(/^#荷花看视频/, '').trim();
+        if (!keyword) return e.reply("请输入关键词，例如: #荷花看视频 再无后文");
+
+        try {
+            await e.reply(`正在搜索并获取第一个结果: ${keyword} ...`);
+            const results = await this._doSearch(keyword);
+
+            if (!results || results.length === 0) {
+                return e.reply("未搜索到相关视频。");
+            }
+
+            const firstVideo = results[0];
+            const title = firstVideo.title.replace(/<[^>]+>/g, "");
+            await e.reply(`搜索到: ${title}\n开始解析...`);
+
+            const videoUrl = `https://www.bilibili.com/video/${firstVideo.bvid}`;
+            return this.processUrl(e, videoUrl);
+
+        } catch (err) {
+            await e.reply(`处理失败: ${err.message}`);
+        }
+        return true;
+    }
+
+    getContextKey(e) {
+        return `${CACHE_KEY_SEARCH}${e.isGroup ? 'group:' + e.group_id : 'user:' + e.user_id}`;
+    }
+
+    formatNumber(num) {
+        if (num >= 10000) return (num / 10000).toFixed(1) + '万';
+        return num;
+    }
+
     async checkCache(videoId) {
         this._loadConfig();
         const cfg = this.pluginConfig.bilibili || {};
         if (!cfg.enableCache) return null;
 
-        const key = `${cacheRedisKeyPrefix}${videoId}`;
+        const key = `${CACHE_KEY_VIDEO}${videoId}`;
         const cachedName = await redis.get(key);
         if (!cachedName) return null;
         
@@ -93,7 +293,7 @@ export class BilibiliParser extends plugin {
         const cfg = this.pluginConfig.bilibili || {};
         if (!cfg.enableCache) return;
 
-        const key = `${cacheRedisKeyPrefix}${videoId}`;
+        const key = `${CACHE_KEY_VIDEO}${videoId}`;
         if (cfg.cacheTTL > 0) {
             await redis.set(key, actualName, { EX: cfg.cacheTTL });
         } else {
@@ -109,6 +309,10 @@ export class BilibiliParser extends plugin {
         const match = cleanMsg.match(surgicalRegex);
         if (!match) return false;
         const contentToParse = match[1] || match[2];
+        return this.processUrl(e, contentToParse);
+    }
+
+    async processUrl(e, contentToParse) {
         try {
             const normalizedUrl = await this.normalizeUrl(contentToParse);
             if (normalizedUrl.includes("live.bilibili.com")) {
