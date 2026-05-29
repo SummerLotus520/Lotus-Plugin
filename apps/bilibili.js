@@ -304,12 +304,66 @@ export class BilibiliParser extends plugin {
     async parse(e) {
         this._loadConfig();
         const rawMsg = e.raw_message || e.msg || "";
+        const jsonCardUrl = this.extractBilibiliUrlFromJsonCard(rawMsg);
+        if (jsonCardUrl) return this.processUrl(e, jsonCardUrl);
+        if (jsonCardUrl === null) return false;
+
         const cleanMsg = rawMsg.replace(/\\\//g, '/');
         const surgicalRegex = /(https?:\/\/(?:www\.bilibili\.com\/video\/[^"'\s,\]}]+|b23\.tv\/[^"'\s,\]}]+|live\.bilibili\.com\/[^"'\s,\]}]+))|(BV[1-9a-zA-Z]{10}|av[0-9]+)/i;
         const match = cleanMsg.match(surgicalRegex);
         if (!match) return false;
         const contentToParse = match[1] || match[2];
         return this.processUrl(e, contentToParse);
+    }
+
+    extractBilibiliUrlFromJsonCard(rawMsg) {
+        if (!rawMsg || typeof rawMsg !== 'string') return undefined;
+
+        const trimmed = rawMsg.trim();
+        const jsonStart = trimmed.indexOf('{');
+        const jsonEnd = trimmed.lastIndexOf('}');
+        if (jsonStart === -1 || jsonEnd <= jsonStart) return undefined;
+        const jsonText = trimmed
+            .slice(jsonStart, jsonEnd + 1)
+            .replace(/&#44;/g, ',')
+            .replace(/&#91;/g, '[')
+            .replace(/&#93;/g, ']')
+            .replace(/&amp;/g, '&');
+
+        let card;
+        try {
+            card = JSON.parse(jsonText);
+        } catch (error) {
+            return undefined;
+        }
+
+        const isLikelyJsonCard = Boolean(card?.app || card?.meta || card?.prompt || card?.view || card?.config);
+
+        const trustedFields = ['qqdocurl', 'jumpUrl', 'jump_url', 'shareUrl', 'share_url', 'url'];
+        const skippedFields = new Set(['preview', 'icon']);
+        const candidates = [];
+
+        const collect = (value) => {
+            if (!value || typeof value !== 'object') return;
+            for (const [key, child] of Object.entries(value)) {
+                if (skippedFields.has(key)) continue;
+                if (trustedFields.includes(key) && typeof child === 'string') {
+                    candidates.push(child);
+                    continue;
+                }
+                if (child && typeof child === 'object') collect(child);
+            }
+        };
+
+        collect(card);
+
+        for (const candidate of candidates) {
+            const cleanCandidate = candidate.replace(/\\\//g, '/');
+            const match = cleanCandidate.match(/https?:\/\/(?:www\.bilibili\.com\/video\/[^"'\s,\]}]+|b23\.tv\/[^"'\s,\]}]+|live\.bilibili\.com\/[^"'\s,\]}]+)/i);
+            if (match) return match[0];
+        }
+
+        return isLikelyJsonCard ? null : undefined;
     }
 
     async processUrl(e, contentToParse) {
